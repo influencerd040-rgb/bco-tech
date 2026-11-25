@@ -998,6 +998,15 @@ COMMIT;
           if (supabaseClient) await supabaseClient.auth.signOut();
         };
 
+        const deleteOrders = async (list, question) => {
+          if (!list.length || !window.confirm(`${question}\n\nNo se puede deshacer y dejarán de contar en Estadísticas.`)) return;
+          // .select() confirma cuántos se borraron de verdad
+          const { data, error } = await supabaseClient.from('orders').delete().in('id', list.map(o => o.id)).select('id');
+          if (error) return showToast(`No se pudo borrar: ${error.message}`);
+          await fetchOrdersFromClient(supabaseClient);
+          showToast(data?.length ? `${data.length} pedido(s) borrado(s)` : 'No se borró ningún pedido: vuelve a entrar a Admin');
+        };
+
         const updateOrderStatus = async (id, status) => {
           const { error } = await supabaseClient.from('orders').update({ status }).eq('id', id);
           if (error) return showToast(`No se pudo cambiar el estado: ${error.message}`);
@@ -1862,7 +1871,12 @@ COMMIT;
                             </button>
                           )}
                         </div>
-                        {orders.length === 0 ? (
+                        {orders.some(o => ['Entregado', 'Cancelado'].includes(o.status)) && (
+                      <button type="button" onClick={() => { const done = orders.filter(o => ['Entregado', 'Cancelado'].includes(o.status)); deleteOrders(done, `¿Borrar ${done.length} pedido(s) entregados o cancelados?`); }} className="px-3 py-2 rounded-xl bg-red-500/15 text-red-400 font-bold flex items-center gap-1">
+                        <TrashIcon className="h-4 w-4" /> Borrar entregados y cancelados
+                      </button>
+                    )}
+                    {orders.length === 0 ? (
                           <p className="text-gray-400">No hay pedidos registrados aún.</p>
                         ) : (
                           <div className="space-y-3">
@@ -1872,9 +1886,12 @@ COMMIT;
                                   <p className="font-bold text-[#8CFF00]">{o.id || o.order_number || 'ORD'} • {o.customer_name}</p>
                                   <p className="text-gray-400">{o.phone} • RD${Number(o.total || 0).toFixed(2)}</p>
                                 </div>
-                                <select value={o.status || 'Nuevo'} onChange={e => updateOrderStatus(o.id, e.target.value)} className="px-2 py-1 rounded-xl bg-gray-800 text-gray-100 font-bold">
+                                <div className="flex items-center gap-2">
+                            <select value={o.status || 'Nuevo'} onChange={e => updateOrderStatus(o.id, e.target.value)} className="px-2 py-1 rounded-xl bg-gray-800 text-gray-100 font-bold">
                               {ORDER_STATUSES.map(st => <option key={st} value={st}>{st}</option>)}
                             </select>
+                            <button type="button" aria-label={`Borrar pedido ${o.id}`} onClick={() => deleteOrders([o], `¿Borrar el pedido ${o.id} de ${o.customer_name}?`)} className="p-2 rounded-xl bg-red-500/15 text-red-400"><TrashIcon className="h-4 w-4" /></button>
+                          </div>
                               </div>
                             ))}
                           </div>
