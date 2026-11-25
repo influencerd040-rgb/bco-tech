@@ -423,60 +423,13 @@
         { id: 'gadgets', name: 'Gadgets' }
       ];
 
-      const INITIAL_PRODUCTS = [
-        {
-          id: 'prod-1',
-          name: 'Auriculares BCO Pro Wireless ANC',
-          category: 'auriculares',
-          price: 129.99,
-          original_price: 169.99,
-          stock: 12,
-          active: true,
-          featured: true,
-          on_sale: true,
-          description: 'Auriculares Bluetooth de alta fidelidad con cancelación de ruido activa (ANC), latencia ultra baja y 40 horas de autonomía.',
-          images: ['https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=800&q=80']
-        },
-        {
-          id: 'prod-2',
-          name: 'Teclado Mecánico BCO CyberBlade RGB 75%',
-          category: 'teclados',
-          price: 99.50,
-          original_price: 125.00,
-          stock: 8,
-          active: true,
-          featured: true,
-          on_sale: true,
-          description: 'Teclado compacto Hot-Swappable con switches mecánicos lineales y chasis de aluminio pulido.',
-          images: ['https://images.unsplash.com/photo-1587829741301-dc798b83add3?auto=format&fit=crop&w=800&q=80']
-        },
-        {
-          id: 'prod-3',
-          name: 'Mouse BCO NeonStrike Superlight 26K',
-          category: 'mouse',
-          price: 69.99,
-          original_price: 69.99,
-          stock: 25,
-          active: true,
-          featured: true,
-          on_sale: false,
-          description: 'Mouse ultraligero de 49 gramos con sensor óptico de 26,000 DPI y microswitches ópticos.',
-          images: ['https://images.unsplash.com/photo-1615663245857-ac93bb7c39e7?auto=format&fit=crop&w=800&q=80']
-        },
-        {
-          id: 'prod-4',
-          name: 'Monitor BCO VisionX 27" Fast-IPS 180Hz',
-          category: 'monitores',
-          price: 289.00,
-          original_price: 349.00,
-          stock: 5,
-          active: true,
-          featured: true,
-          on_sale: true,
-          description: 'Monitor QHD 2K con panel Fast IPS, 180Hz y tiempo de respuesta de 0.5ms GTG.',
-          images: ['https://images.unsplash.com/photo-1527443224154-c4a3942d3acf?auto=format&fit=crop&w=800&q=80']
-        }
-      ];
+      const CATALOG_KEY = 'bco_catalog_v2';
+      const readCatalog = () => {
+        try {
+          const list = JSON.parse(localStorage.getItem(CATALOG_KEY) || '[]');
+          return Array.isArray(list) ? list : [];
+        } catch { return []; }
+      };
 
       const DEFAULT_SETTINGS = {
         whatsapp: '18098435918',
@@ -810,6 +763,20 @@ COMMIT;
         return null;
       };
 
+      // Sube las fotos nuevas a Storage; en la base de datos solo queda el enlace
+      const uploadPhotos = async (client, folder, images) => {
+        const out = [];
+        for (const src of images || []) {
+          if (!String(src).startsWith('data:')) { out.push(src); continue; }
+          const blob = await (await fetch(src)).blob();
+          const path = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${blob.type.split('/')[1] || 'jpg'}`;
+          const { error } = await client.storage.from('productos').upload(path, blob, { contentType: blob.type, cacheControl: '31536000' });
+          if (error) throw new Error(error.message);
+          out.push(client.storage.from('productos').getPublicUrl(path).data.publicUrl);
+        }
+        return out;
+      };
+
       function App() {
         const initialConfig = useMemo(() => getInitialSupabaseConfig(), []);
         const [theme, setTheme] = useState('dark');
@@ -819,7 +786,9 @@ COMMIT;
         const [adminPasswordInput, setAdminPasswordInput] = useState('');
 
         const [categories, setCategories] = useState(INITIAL_CATEGORIES);
-        const [products, setProducts] = useState(INITIAL_PRODUCTS);
+        const [products, setProducts] = useState(readCatalog);
+        const [catalogStatus, setCatalogStatus] = useState('loading');
+        const productsBusy = React.useRef(false);
         const [orders, setOrders] = useState([]);
         const [settings, setSettings] = useState(DEFAULT_SETTINGS);
         const [settingsDraft, setSettingsDraft] = useState(DEFAULT_SETTINGS);
@@ -912,21 +881,27 @@ COMMIT;
         };
 
         const fetchProductsFromClient = async (client) => {
-          if (!client) return;
-          const res = await client.from('products').select('*');
-          if (res.error) {
-            setProductsSyncMessage(`Aviso productos Supabase: ${res.error.message}`);
-            return;
-          }
-          if (Array.isArray(res.data) && res.data.length > 0) {
-            // Los costos solo se entregan al administrador (permisos de la base de datos)
-            const costs = await client.from('product_costs').select('*');
-            const byId = new Map((costs.data || []).map(c => [c.product_id, c.cost]));
-            setProducts(res.data.map(p => {
-              const { cost, ...rest } = p;
-              return byId.has(p.id) ? { ...rest, cost: byId.get(p.id) } : rest;
-            }));
-            setProductsSyncMessage(`Catálogo en vivo (${res.data.length} producto(s))`);
+          if (!client || productsBusy.current) return;
+          productsBusy.current = true;
+          try {
+            const res = await client.from('products').select('*');
+            if (res.error) throw new Error(res.error.message);
+            const list = (res.data || []).map(({ cost, ...rest }) => rest);
+            try { localStorage.setItem(CATALOG_KEY, JSON.stringify(list)); } catch {}
+            // Los costos solo se piden con sesión de administrador
+            let byId = new Map();
+            if (await isAdminSession(client)) {
+              const costs = await client.from('product_costs').select('*');
+              byId = new Map((costs.data || []).map(c => [c.product_id, c.cost]));
+            }
+            setProducts(list.map(p => byId.has(p.id) ? { ...p, cost: byId.get(p.id) } : p));
+            setCatalogStatus('ready');
+            setProductsSyncMessage(`Catálogo en vivo (${list.length} producto(s))`);
+          } catch (err) {
+            setCatalogStatus('error');
+            setProductsSyncMessage(`Aviso productos Supabase: ${err.message}`);
+          } finally {
+            productsBusy.current = false;
           }
         };
 
@@ -958,14 +933,10 @@ COMMIT;
           setSupabaseClient(client);
 
           (async () => {
+            fetchProductsFromClient(client);
             const { data: catData, error: catErr } = await client.from('categories').select('*');
-            if (catErr) {
-              setSupabaseStatus('error');
-              return;
-            }
-            setSupabaseStatus('connected');
+            setSupabaseStatus(catErr ? 'error' : 'connected');
             if (catData && catData.length > 0) setCategories(catData);
-            await fetchProductsFromClient(client);
             const { data: setDb } = await client.from('store_settings').select('*').single();
             if (setDb) {
               setSettings(prev => ({ ...prev, ...setDb, hero_image: setDb.hero_image || prev.hero_image }));
@@ -976,8 +947,18 @@ COMMIT;
             }
           })();
 
-          const intervalId = setInterval(() => fetchProductsFromClient(client), 30000);
-          return () => clearInterval(intervalId);
+          // Actualiza solo con la página a la vista, y al volver a ella o recuperar internet
+          const refresh = () => { if (document.visibilityState !== 'hidden') fetchProductsFromClient(client); };
+          const intervalId = setInterval(refresh, 45000);
+          document.addEventListener('visibilitychange', refresh);
+          window.addEventListener('online', refresh);
+          window.addEventListener('pageshow', refresh);
+          return () => {
+            clearInterval(intervalId);
+            document.removeEventListener('visibilitychange', refresh);
+            window.removeEventListener('online', refresh);
+            window.removeEventListener('pageshow', refresh);
+          };
         }, [supabaseConfig]);
 
         // Los pedidos solo se descargan con sesión de administrador
@@ -1358,6 +1339,11 @@ COMMIT;
           if (!String(prod.name || '').trim() || !(Number(prod.price) > 0)) return showToast('Escribe un nombre y un precio mayor que 0');
           if (!supabaseClient) return showToast('Sin conexión: no se guardó');
           const { cost, created_at, ...row } = { ...prod, id: prod.id || 'prod-' + Date.now() };
+          try {
+            row.images = await uploadPhotos(supabaseClient, row.id, row.images);
+          } catch (err) {
+            return showToast(`No se pudo subir la foto: ${err.message}`);
+          }
           const { error } = await supabaseClient.from('products').upsert([row]);
           if (error) return showToast(`No se guardó: ${error.message}`);
           if (cost !== undefined && cost !== null) {
@@ -1518,12 +1504,18 @@ COMMIT;
                     ))}
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                  {products.length === 0 && (
+                <div className="text-center text-sm text-gray-400 py-8 space-y-3">
+                  <p>{catalogStatus === 'loading' ? 'Cargando productos...' : catalogStatus === 'error' ? 'No se pudieron cargar los productos. Revisa tu internet.' : 'Todavía no hay productos.'}</p>
+                  {catalogStatus === 'error' && <button type="button" onClick={() => fetchProductsFromClient(supabaseClient)} className="bg-[#8CFF00] text-black font-bold px-4 py-2 rounded-xl">Reintentar</button>}
+                </div>
+              )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
                     {filteredProducts.map(prod => (
                       <div key={prod.id} className="bg-white dark:bg-[#121824] rounded-3xl border-2 border-gray-200 dark:border-gray-800 hover:border-[#8CFF00] transition-all overflow-hidden flex flex-col justify-between">
                         <div>
                           <div onClick={() => setSelectedProduct(prod)} className="aspect-square bg-gray-900 cursor-pointer overflow-hidden relative">
-                            <img src={prod.images?.[0] || 'https://placehold.co/400x400/121824/8CFF00?text=BCO+Tech'} alt={prod.name} className="w-full h-full object-cover hover:scale-105 transition-transform" />
+                            <img loading="lazy" decoding="async" src={prod.images?.[0] || 'https://placehold.co/400x400/121824/8CFF00?text=BCO+Tech'} alt={prod.name} className="w-full h-full object-cover hover:scale-105 transition-transform" />
                             {prod.on_sale && <span className="absolute top-3 left-3 bg-[#0033FF] text-white text-[10px] font-black px-2.5 py-1 rounded-full">OFERTA</span>}
                           </div>
                           <div className="p-4 space-y-1">
