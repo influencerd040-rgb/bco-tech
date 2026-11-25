@@ -784,6 +784,32 @@ COMMIT;
         );
       };
 
+      // El envío de pedidos continúa aunque el teléfono cambie a WhatsApp
+      const orderSafeFetch = (input, init = {}) => {
+        const isOrder = String(input?.url || input).includes('/rest/v1/orders') && init.method === 'POST';
+        const small = typeof init.body === 'string' && new Blob([init.body]).size < 60000;
+        return fetch(input, isOrder && small ? { ...init, keepalive: true } : init);
+      };
+
+      // Pedidos pendientes de confirmar: se reintentan si falla la conexión
+      const PENDING_KEY = 'bco_pending_orders';
+      const readPending = () => {
+        try { return JSON.parse(localStorage.getItem(PENDING_KEY) || '[]'); } catch { return []; }
+      };
+      const writePending = (list) => {
+        try { localStorage.setItem(PENDING_KEY, JSON.stringify(list.slice(-20))); } catch {}
+      };
+      const sendOrder = async (client, row) => {
+        try {
+          const { error } = await client.from('orders').insert([row]);
+          if (error && error.code !== '23505') return error; // 23505: ya estaba guardado
+        } catch (err) {
+          return err;
+        }
+        writePending(readPending().filter(o => o.id !== row.id));
+        return null;
+      };
+
       function App() {
         const initialConfig = useMemo(() => getInitialSupabaseConfig(), []);
         const [theme, setTheme] = useState('dark');
@@ -924,7 +950,7 @@ COMMIT;
           }
           let client;
           try {
-            client = window.supabase.createClient(supabaseConfig.url, supabaseConfig.key);
+            client = window.supabase.createClient(supabaseConfig.url, supabaseConfig.key, { global: { fetch: orderSafeFetch } });
           } catch {
             setSupabaseStatus('error');
             return;
@@ -1049,15 +1075,38 @@ COMMIT;
         const monthlyStats = useMemo(() => buildMonthlySalesStats(orders, products), [orders, products]);
 
         const persistOrderRecord = async (record) => {
-          const failed = (reason) => {
-            showToast(`El pedido no se guardó en el sistema; envíalo por WhatsApp. ${reason}`);
-            return false;
-          };
-          if (!supabaseClient) return failed('');
           const items = record.items.map(({ product, quantity }) => ({ product: { id: product.id, name: product.name, price: product.price }, quantity }));
-          const { error } = await supabaseClient.from('orders').insert([{ ...record, items }]);
-          return error ? failed(error.message) : true;
+          const row = { ...record, items };
+          writePending([...readPending(), row]);
+          if (!supabaseClient) return false;
+          // No esperar indefinidamente con mala señal: el pedido queda pendiente y se reintenta
+          const error = await Promise.race([
+            sendOrder(supabaseClient, row),
+            new Promise(resolve => setTimeout(() => resolve(new Error('timeout')), 8000))
+          ]);
+          return !error;
         };
+
+        useEffect(() => {
+          if (!supabaseClient) return;
+          const retry = () => readPending().forEach(row => sendOrder(supabaseClient, row));
+          retry();
+          const onVisible = () => { if (document.visibilityState === 'visible') retry(); };
+          window.addEventListener('online', retry);
+          document.addEventListener('visibilitychange', onVisible);
+          return () => {
+            window.removeEventListener('online', retry);
+            document.removeEventListener('visibilitychange', onVisible);
+          };
+        }, [supabaseClient]);
+
+        // Si el navegador bloquea la ventana nueva, abrir WhatsApp en la misma
+        const openWhatsApp = (url) => {
+          if (!window.open(url, '_blank')) window.location.href = url;
+        };
+
+        const sendingRef = React.useRef(false);
+        const [isSending, setIsSending] = useState(false);
 
         // Generador de Factura PDF nativa sin dependencias externas
         const generateInvoicePDF = (order) => {
@@ -1143,7 +1192,9 @@ COMMIT;
 
         const handleCheckoutSubmit = async (e) => {
           e.preventDefault();
-          if (cart.length === 0) return;
+          if (cart.length === 0 || sendingRef.current) return;
+          sendingRef.current = true;
+          setIsSending(true);
           const orderId = 'ORD-' + String(Math.floor(Math.random() * 100000000)).padStart(8, '0');
           const cleanMainWa = String(settings.whatsapp || '').replace(/\D/g, '');
           const cleanInvoiceWa = String(settings.invoice_whatsapp || '').replace(/\D/g, '');
@@ -1161,7 +1212,7 @@ COMMIT;
             created_at: new Date().toISOString()
           };
 
-          const saving = persistOrderRecord(newOrder); // sin esperar: evita que se bloquee la ventana de WhatsApp
+          const saved = await persistOrderRecord(newOrder); // primero guardar, después salir de la página
 
           let msg = `🛒 *NUEVO PEDIDO - BCO TECH* (#${orderId})\n👤 *Cliente:* ${checkoutForm.name}\n📞 *Teléfono:* ${checkoutForm.phone}\n📍 *Dirección:* ${checkoutForm.address}\n💳 *Pago:* ${checkoutForm.paymentMethod.toUpperCase()}\n\n📦 *PRODUCTOS:*\n`;
           cart.forEach(item => {
@@ -1172,15 +1223,18 @@ COMMIT;
           const waUrl = `https://wa.me/${cleanMainWa}?text=${encodeURIComponent(msg)}`;
           const invoiceWaUrl = cleanInvoiceWa ? `https://wa.me/${cleanInvoiceWa}?text=${encodeURIComponent(msg)}` : '';
 
-          generateInvoicePDF(newOrder);
-          setLastConfirmedOrder({ order: newOrder, waUrl, invoiceWaUrl });
+          setLastConfirmedOrder({ order: newOrder, waUrl, invoiceWaUrl, saved });
           setCart([]);
           setIsCheckoutOpen(false);
           setIsCartOpen(false);
+          sendingRef.current = false;
+          setIsSending(false);
+          // Si el navegador bloquea la ventana, queda el botón de WhatsApp en la confirmación
           window.open(waUrl, '_blank');
           if (invoiceWaUrl && invoiceWaUrl !== waUrl) {
             setTimeout(() => window.open(invoiceWaUrl, '_blank'), 600);
           }
+          generateInvoicePDF(newOrder);
         };
 
         const handleSpecialOrderSubmit = async (e) => {
@@ -1212,17 +1266,17 @@ COMMIT;
             created_at: new Date().toISOString()
           };
 
-          const saving = persistOrderRecord(specialOrder);
+          await persistOrderRecord(specialOrder);
 
           let waMsg = `✨ *SOLICITUD DE PEDIDO ESPECIAL - BCO TECH* (#${orderId})\n👤 *Cliente:* ${specialOrder.customer_name}\n📞 *Teléfono:* ${specialOrder.phone}\n📦 *Producto Solicitado:* ${specialOrderForm.productName.trim()}`;
           if (specialOrderForm.budget) waMsg += `\n💵 *Presupuesto estimado:* RD$${estimatedTotal.toFixed(2)}`;
           if (specialOrderForm.referenceUrl) waMsg += `\n🔗 *Enlace / Referencia:* ${specialOrderForm.referenceUrl.trim()}`;
           if (specialOrderForm.details) waMsg += `\n📝 *Detalles:* ${specialOrderForm.details.trim()}`;
 
-          window.open(`https://wa.me/${cleanMainWa}?text=${encodeURIComponent(waMsg)}`, '_blank');
+          openWhatsApp(`https://wa.me/${cleanMainWa}?text=${encodeURIComponent(waMsg)}`);
           setSpecialOrderForm({ customerName: '', phone: '', productName: '', referenceUrl: '', budget: '', details: '' });
           setIsSpecialOrderOpen(false);
-          if (await saving) showToast('Solicitud registrada: envíala en WhatsApp');
+          showToast('Envía la solicitud en WhatsApp');
         };
 
         const handleCustomSubmit = async (e) => {
@@ -1253,16 +1307,16 @@ COMMIT;
             created_at: new Date().toISOString()
           };
 
-          const saving = persistOrderRecord(customRecord);
+          await persistOrderRecord(customRecord);
 
           let waMsg = `🎨 *SOLICITUD PERSONALIZADA - BCO TECH* (#${orderId})\n👤 *Cliente:* ${customRecord.customer_name}\n📞 *Teléfono:* ${customRecord.phone}\n🛠️ *Tipo:* ${customForm.itemType}`;
           if (customForm.colorStyle) waMsg += `\n🎨 *Estilo / Color:* ${customForm.colorStyle.trim()}`;
           waMsg += `\n📝 *Detalles:* ${customForm.details.trim()}`;
 
-          window.open(`https://wa.me/${cleanMainWa}?text=${encodeURIComponent(waMsg)}`, '_blank');
+          openWhatsApp(`https://wa.me/${cleanMainWa}?text=${encodeURIComponent(waMsg)}`);
           setCustomForm({ customerName: '', phone: '', itemType: 'Setup / PC / Periférico', colorStyle: '', details: '' });
           setIsCustomOpen(false);
-          if (await saving) showToast('Solicitud registrada: envíala en WhatsApp');
+          showToast('Envía la solicitud en WhatsApp');
         };
 
         const askMiniAi = (questionText) => {
@@ -2173,7 +2227,7 @@ COMMIT;
                     <option value="transferencia">Transferencia Bancaria</option>
                     <option value="tarjeta">Tarjeta / Link de Pago</option>
                   </select>
-                  <button type="submit" className="w-full bg-[#8CFF00] text-black font-extrabold py-3 rounded-2xl uppercase font-display">Confirmar Pedido</button>
+                  <button type="submit" className="w-full bg-[#8CFF00] text-black font-extrabold py-3 rounded-2xl uppercase font-display disabled:opacity-50" disabled={isSending}>{isSending ? 'Enviando...' : 'Confirmar Pedido'}</button>
                 </form>
               </div>
             )}
@@ -2184,6 +2238,7 @@ COMMIT;
                 <div className="bg-white dark:bg-[#121824] border-2 border-[#8CFF00] rounded-3xl max-w-sm w-full p-6 space-y-4 relative text-xs">
                   <button onClick={() => setLastConfirmedOrder(null)} className="absolute top-4 right-4"><XIcon className="h-5 w-5" /></button>
                   <h3 className="text-base font-bold font-display">Factura #{lastConfirmedOrder.order.id}</h3>
+              <p className="font-bold">{lastConfirmedOrder.saved ? 'Pedido registrado.' : 'Aún no pudimos registrar el pedido.'} Envíalo también por WhatsApp con el botón.</p>
                   <p className="text-gray-400">Total: <span className="text-[#8CFF00] font-bold">RD${Number(lastConfirmedOrder.order.total).toFixed(2)}</span></p>
                   <div className="grid grid-cols-2 gap-2">
                     <button onClick={() => generateInvoicePDF(lastConfirmedOrder.order)} className="bg-[#0033FF] text-white font-bold py-2.5 rounded-xl uppercase">PDF</button>
