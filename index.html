@@ -33,8 +33,8 @@
     <!-- Configuración por defecto de Supabase -->
     <script>
       window.__BCO_SUPABASE_DEFAULTS__ = {
-        url: 'https://wpqshgwfksfbedyvanwx.supabase.co',
-        publishableKey: 'sb_publishable_N3fcqp1-j0kRAmrN1zhAqQ_UtUb6NqN'
+        url: 'https://uwgzywmtjjppvwewdali.supabase.co',
+        publishableKey: 'sb_publishable_qp_qT-7s7TmMt8PCYWRBzQ_m6Tqw68I'
       };
     </script>
 
@@ -148,13 +148,13 @@
           );
           if (foundOrder) {
             return {
-              text: `📦 **Estado de tu orden ${code}:**\n• **Cliente:** ${foundOrder.customer_name}\n• **Estado actual:** ${foundOrder.status || 'En proceso'}\n• **Total:** $${Number(foundOrder.total || 0).toFixed(2)}\n• **Método:** ${String(foundOrder.payment_method || '').toUpperCase()}\n\nSi deseas seguimiento directo con envío, pulsa el botón de WhatsApp abajo.`,
+              text: `📦 **Estado de tu orden ${code}:**\n• **Cliente:** ${foundOrder.customer_name}\n• **Estado actual:** ${foundOrder.status || 'En proceso'}\n• **Total:** RD$${Number(foundOrder.total || 0).toFixed(2)}\n• **Método:** ${String(foundOrder.payment_method || '').toUpperCase()}\n\nSi deseas seguimiento directo con envío, pulsa el botón de WhatsApp abajo.`,
               actions: [{ type: 'whatsapp', label: 'Consultar orden en WhatsApp', prefill: `Hola BCO Tech, consulto el estado de mi orden ${code}.` }],
               nextContext: 'order_status'
             };
           }
           return {
-            text: `No encontré la orden **${code}** en los registros sincronizados de esta sesión. Puedes verificarla directamente con nuestro equipo por WhatsApp.`,
+            text: `Para proteger tus datos, el estado de la orden **${code}** se consulta directamente con nuestro equipo por WhatsApp.`,
             actions: [{ type: 'whatsapp', label: 'Verificar orden por WhatsApp', prefill: `Hola BCO Tech, necesito verificar el estado de mi pedido ${code}.` }],
             nextContext: 'order_status'
           };
@@ -181,6 +181,8 @@
           const foundCat = categories.find(c => norm.includes(normalizeNlpText(c.name)) || norm.includes(normalizeNlpText(c.id)));
           if (foundCat) matchedCategoryId = foundCat.id;
         }
+
+        const asksOffers = /\b(ofertas?|descuentos?|promocion(es)?|rebajas?)\b/.test(norm);
 
         // Puntaje de coincidencia por producto
         const scoredProducts = activeProducts
@@ -212,7 +214,7 @@
           ['recomienda', 'recomiendame', 'catalogo', 'que venden', 'disponible', 'disponibles', 'productos', 'gamer', 'setup'].some(w => norm.includes(w)) &&
           scoredProducts.length === 0;
 
-        if (scoredProducts.length > 0 || asksCatalogOrRecommend) {
+        if (!asksOffers && (scoredProducts.length > 0 || asksCatalogOrRecommend)) {
           const isCheapFilter = ['barato', 'economico', 'economicos', 'menor precio', 'mas barato'].some(w => norm.includes(w));
           let list = scoredProducts.length > 0 ? scoredProducts.map(s => s.prod) : [...activeProducts];
           if (isCheapFilter) {
@@ -253,7 +255,7 @@
         });
 
         // 4. Respuestas especializadas por intención
-        switch (bestIntent) {
+        switch (asksOffers ? 'offers' : bestIntent) {
           case 'greeting':
             return {
               text: `¡Hola! 👋 Soy la **IA de BCO Tech**. Estoy entrenada para ayudarte al instante con:\n• Búsqueda y precios de productos del catálogo\n• Ofertas activas y disponibilidad\n• Envíos, métodos de pago y garantía\n• Pedidos especiales o personalizados\n\n¿Qué equipo o accesorio buscas hoy?`,
@@ -271,14 +273,14 @@
             }
             const minPrice = activeProducts.length ? Math.min(...activeProducts.map(p => Number(p.price))) : 0;
             return {
-              text: `Actualmente tenemos productos desde **$${minPrice.toFixed(2)}**. Puedes activar el filtro **Ofertas** en el catálogo o escribirme qué categoría te interesa.`,
+              text: `Actualmente tenemos productos desde **RD$${minPrice.toFixed(2)}**. Puedes activar el filtro **Ofertas** en el catálogo o escribirme qué categoría te interesa.`,
               nextContext: 'offers'
             };
           }
 
           case 'shipping':
             return {
-              text: `🚚 **Envíos y Entregas BCO Tech:**\n• **Cobertura:** Envíos rápidos a todo el país.\n• **Tiempo estimado:** 24 a 48 horas en ciudad principal y 2 a 4 días laborables al interior.\n• **Envío GRATIS:** En compras superiores a **$150.00**.\n• **Confirmación:** Al confirmar tu pedido recibes tu factura PDF y coordinamos la entrega por WhatsApp.`,
+              text: `🚚 **Envíos y Entregas BCO Tech:**\n• **Cobertura:** Envíos rápidos a todo el país.\n• **Tiempo estimado:** 24 a 48 horas en ciudad principal y 2 a 4 días laborables al interior.\n• **Envío GRATIS:** En compras superiores a **RD$150.00**.\n• **Confirmación:** Al confirmar tu pedido recibes tu factura PDF y coordinamos la entrega por WhatsApp.`,
               actions: [{ type: 'whatsapp', label: 'Coordinar envío por WhatsApp', prefill: 'Hola BCO Tech, quiero consultar el costo y tiempo de envío a mi zona.' }],
               nextContext: 'shipping'
             };
@@ -328,7 +330,7 @@
             const minPrice = activeProducts.length ? Math.min(...activeProducts.map(p => Number(p.price))) : 0;
             const maxPrice = activeProducts.length ? Math.max(...activeProducts.map(p => Number(p.price))) : 0;
             return {
-              text: `🤔 No identifiqué una palabra clave exacta, pero puedo ayudarte con:\n• **Productos:** Tenemos ${activeProducts.length} artículos activos (desde **$${minPrice.toFixed(2)}** hasta **$${maxPrice.toFixed(2)}**).\n• **Consultas:** Prueba escribir *"auriculares"*, *"teclado"*, *"ofertas"*, *"envíos"*, *"pagos"* o *"garantía"*.\n• **Encargos:** También gestionamos pedidos especiales y personalizados.`,
+              text: `🤔 No identifiqué una palabra clave exacta, pero puedo ayudarte con:\n• **Productos:** Tenemos ${activeProducts.length} artículos activos (desde **RD$${minPrice.toFixed(2)}** hasta **RD$${maxPrice.toFixed(2)}**).\n• **Consultas:** Prueba escribir *"auriculares"*, *"teclado"*, *"ofertas"*, *"envíos"*, *"pagos"* o *"garantía"*.\n• **Encargos:** También gestionamos pedidos especiales y personalizados.`,
               actions: [
                 { type: 'special', label: 'Pedido Especial' },
                 { type: 'whatsapp', label: 'Hablar con Asesor', prefill: `Hola BCO Tech, tengo una consulta: ${raw}` }
@@ -408,7 +410,6 @@
           id: 'prod-1',
           name: 'Auriculares BCO Pro Wireless ANC',
           category: 'auriculares',
-          cost: 84.50,
           price: 129.99,
           original_price: 169.99,
           stock: 12,
@@ -422,7 +423,6 @@
           id: 'prod-2',
           name: 'Teclado Mecánico BCO CyberBlade RGB 75%',
           category: 'teclados',
-          cost: 64.00,
           price: 99.50,
           original_price: 125.00,
           stock: 8,
@@ -436,7 +436,6 @@
           id: 'prod-3',
           name: 'Mouse BCO NeonStrike Superlight 26K',
           category: 'mouse',
-          cost: 42.00,
           price: 69.99,
           original_price: 69.99,
           stock: 25,
@@ -450,7 +449,6 @@
           id: 'prod-4',
           name: 'Monitor BCO VisionX 27" Fast-IPS 180Hz',
           category: 'monitores',
-          cost: 195.00,
           price: 289.00,
           original_price: 349.00,
           stock: 5,
@@ -467,96 +465,97 @@
         invoice_whatsapp: '',
         hero_title: 'TECNOLOGÍA DE SIGUIENTE NIVEL',
         hero_subtitle: 'Equípate con periféricos pro, monitores de alta tasa de refresco y gadgets diseñados para rendir al máximo.',
-        hero_image: localStorage.getItem('bco_hero_image') || 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?auto=format&fit=crop&w=1200&q=80',
+        hero_image: 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?auto=format&fit=crop&w=1200&q=80',
         store_hours: 'Lunes a Sábado: 09:00 - 20:00 hs',
         custom_logo_url: '',
         logo_pill_in_dark: true
       };
 
-      const SETUP_SQL_SCRIPT = `CREATE TABLE IF NOT EXISTS public.categories (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  icon TEXT DEFAULT 'Cpu',
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-CREATE TABLE IF NOT EXISTS public.products (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  category TEXT REFERENCES public.categories(id) ON DELETE SET NULL,
-  cost NUMERIC DEFAULT 0,
-  price NUMERIC NOT NULL,
-  original_price NUMERIC,
-  stock INT DEFAULT 0,
-  active BOOLEAN DEFAULT TRUE,
-  featured BOOLEAN DEFAULT FALSE,
-  on_sale BOOLEAN DEFAULT FALSE,
-  description TEXT,
-  specs JSONB DEFAULT '[]'::jsonb,
-  images JSONB DEFAULT '[]'::jsonb,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-CREATE TABLE IF NOT EXISTS public.orders (
-  id TEXT PRIMARY KEY,
-  customer_name TEXT NOT NULL,
-  phone TEXT NOT NULL,
-  address TEXT NOT NULL,
-  payment_method TEXT NOT NULL,
-  notes TEXT,
-  items JSONB NOT NULL,
-  total NUMERIC NOT NULL,
-  status TEXT DEFAULT 'Nuevo',
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-CREATE TABLE IF NOT EXISTS public.store_settings (
-  id INT PRIMARY KEY DEFAULT 1,
-  whatsapp TEXT,
-  hero_title TEXT,
-  hero_subtitle TEXT,
-  hero_image TEXT,
-  store_hours TEXT,
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
+      const SETUP_SQL_SCRIPT = `-- BCO Tech: tablas y permisos seguros. Se puede ejecutar varias veces.
+-- Antes de empezar, haz una copia de seguridad de tus datos.
+BEGIN;
+CREATE TABLE IF NOT EXISTS public.categories (id TEXT PRIMARY KEY, name TEXT NOT NULL, icon TEXT DEFAULT 'Cpu', created_at TIMESTAMPTZ DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS public.products (id TEXT PRIMARY KEY, name TEXT NOT NULL, category TEXT REFERENCES public.categories(id) ON DELETE SET NULL, price NUMERIC NOT NULL, original_price NUMERIC, stock INT DEFAULT 0, active BOOLEAN DEFAULT TRUE, featured BOOLEAN DEFAULT FALSE, on_sale BOOLEAN DEFAULT FALSE, description TEXT, specs JSONB DEFAULT '[]'::jsonb, images JSONB DEFAULT '[]'::jsonb, created_at TIMESTAMPTZ DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS public.orders (id TEXT PRIMARY KEY, customer_name TEXT NOT NULL, phone TEXT NOT NULL, address TEXT NOT NULL, payment_method TEXT NOT NULL, notes TEXT, items JSONB NOT NULL, total NUMERIC NOT NULL, status TEXT DEFAULT 'Nuevo', created_at TIMESTAMPTZ DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS public.store_settings (id INT PRIMARY KEY DEFAULT 1, whatsapp TEXT, hero_title TEXT, hero_subtitle TEXT, hero_image TEXT, store_hours TEXT, updated_at TIMESTAMPTZ DEFAULT NOW());
+ALTER TABLE public.store_settings ADD COLUMN IF NOT EXISTS invoice_whatsapp TEXT;
+ALTER TABLE public.store_settings ADD COLUMN IF NOT EXISTS custom_logo_url TEXT;
+ALTER TABLE public.store_settings ADD COLUMN IF NOT EXISTS logo_pill_in_dark BOOLEAN DEFAULT TRUE;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS stock_discounted BOOLEAN NOT NULL DEFAULT FALSE;
+INSERT INTO public.categories (id, name) VALUES ('auriculares','Auriculares'), ('teclados','Teclados'), ('mouse','Mouse & Mousepads'), ('monitores','Monitores'), ('accesorios','Accesorios'), ('gadgets','Gadgets') ON CONFLICT (id) DO NOTHING;
+
+-- Lista de administradores (nadie puede leerla ni cambiarla desde la web)
+CREATE TABLE IF NOT EXISTS public.admins (user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE);
+CREATE OR REPLACE FUNCTION public.is_admin() RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT EXISTS (SELECT 1 FROM public.admins WHERE user_id = auth.uid());
+$$;
+
+-- Costos en una tabla privada
+CREATE TABLE IF NOT EXISTS public.product_costs (product_id TEXT PRIMARY KEY REFERENCES public.products(id) ON DELETE CASCADE, cost NUMERIC NOT NULL DEFAULT 0);
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'products' AND column_name = 'cost') THEN
+    INSERT INTO public.product_costs (product_id, cost) SELECT id, COALESCE(cost, 0) FROM public.products ON CONFLICT (product_id) DO NOTHING;
+    ALTER TABLE public.products DROP COLUMN cost;
+  END IF;
+END $$;
+
+-- Borrar TODOS los permisos anteriores de estas tablas
+DO $$ DECLARE p RECORD; BEGIN
+  FOR p IN SELECT policyname, tablename FROM pg_policies WHERE schemaname = 'public' AND tablename IN ('categories','products','orders','store_settings','admins','product_costs') LOOP
+    EXECUTE format('DROP POLICY %I ON public.%I', p.policyname, p.tablename);
+  END LOOP;
+END $$;
 ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.store_settings ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Public categories" ON public.categories;
-DROP POLICY IF EXISTS "Public products" ON public.products;
-DROP POLICY IF EXISTS "Public orders" ON public.orders;
-DROP POLICY IF EXISTS "Public settings" ON public.store_settings;
-CREATE POLICY "Public categories" ON public.categories FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Public products" ON public.products FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Public orders" ON public.orders FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WITH CHECK (true);`;
+ALTER TABLE public.admins ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.product_costs ENABLE ROW LEVEL SECURITY;
 
-      // Obtener credenciales iniciales desde parámetros URL, defaults o localStorage
+CREATE POLICY "ver categorias" ON public.categories FOR SELECT USING (true);
+CREATE POLICY "ver productos" ON public.products FOR SELECT USING (true);
+CREATE POLICY "ver ajustes" ON public.store_settings FOR SELECT USING (true);
+CREATE POLICY "admin categorias" ON public.categories FOR ALL TO authenticated USING (public.is_admin()) WITH CHECK (public.is_admin());
+CREATE POLICY "admin productos" ON public.products FOR ALL TO authenticated USING (public.is_admin()) WITH CHECK (public.is_admin());
+CREATE POLICY "admin ajustes" ON public.store_settings FOR ALL TO authenticated USING (public.is_admin()) WITH CHECK (public.is_admin());
+CREATE POLICY "admin pedidos" ON public.orders FOR ALL TO authenticated USING (public.is_admin()) WITH CHECK (public.is_admin());
+CREATE POLICY "admin costos" ON public.product_costs FOR ALL TO authenticated USING (public.is_admin()) WITH CHECK (public.is_admin());
+CREATE POLICY "crear pedidos" ON public.orders FOR INSERT TO anon, authenticated WITH CHECK (status IN ('Nuevo','Pedido Especial','Personalizado') AND stock_discounted = false);
+
+-- Descontar inventario al confirmar y devolverlo al cancelar
+CREATE OR REPLACE FUNCTION public.ajustar_stock() RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE item JSONB; signo INT := 0;
+BEGIN
+  IF NEW.status IN ('Confirmado','Entregado') AND NOT OLD.stock_discounted THEN signo := -1; NEW.stock_discounted := TRUE;
+  ELSIF NEW.status NOT IN ('Confirmado','Entregado') AND OLD.stock_discounted THEN signo := 1; NEW.stock_discounted := FALSE;
+  END IF;
+  IF signo <> 0 THEN
+    IF EXISTS (SELECT 1 FROM jsonb_array_elements(NEW.items) e WHERE (e->>'quantity')::INT <= 0) THEN RAISE EXCEPTION 'Cantidad no valida en el pedido'; END IF;
+    FOR item IN SELECT * FROM jsonb_array_elements(NEW.items) LOOP
+      IF signo = -1 AND EXISTS (SELECT 1 FROM public.products WHERE id = item->'product'->>'id' AND stock < (item->>'quantity')::INT) THEN
+        RAISE EXCEPTION 'No hay existencias suficientes de %', item->'product'->>'name';
+      END IF;
+      UPDATE public.products SET stock = stock + signo * (item->>'quantity')::INT WHERE id = item->'product'->>'id';
+    END LOOP;
+  END IF;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS pedidos_stock ON public.orders;
+CREATE TRIGGER pedidos_stock BEFORE UPDATE OF status ON public.orders FOR EACH ROW EXECUTE FUNCTION public.ajustar_stock();
+COMMIT;
+
+-- DESPUES: crea tu usuario en Authentication > Users y ejecuta (con tu correo):
+-- INSERT INTO public.admins (user_id) SELECT id FROM auth.users WHERE email = 'admin@bcotech.local';
+`;
+
+      // Credenciales fijas: no se aceptan desde la URL ni desde el navegador
       const getInitialSupabaseConfig = () => {
-        try {
-          const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
-          const queryParams = new URLSearchParams(window.location.search);
-          const defaults = window.__BCO_SUPABASE_DEFAULTS__ || {};
-
-          const url = (
-            queryParams.get('sp_url') ||
-            hashParams.get('sp_url') ||
-            defaults.url ||
-            localStorage.getItem('bco_sp_url') ||
-            ''
-          ).trim();
-
-          const key = (
-            queryParams.get('sp_key') ||
-            hashParams.get('sp_key') ||
-            defaults.publishableKey ||
-            localStorage.getItem('bco_sp_key') ||
-            ''
-          ).trim();
-
-          return { url, key };
-        } catch {
-          return { url: '', key: '' };
-        }
+        const d = window.__BCO_SUPABASE_DEFAULTS__ || {};
+        return { url: d.url || '', key: d.publishableKey || '' };
       };
+
+      const SALE_STATUSES = ['Confirmado', 'Entregado'];
+      const ORDER_STATUSES = ['Nuevo', 'Pedido Especial', 'Personalizado', 'Confirmado', 'Entregado', 'Cancelado'];
 
       // Cálculo de estadísticas mensuales de ingresos, costos y ganancias
       const buildMonthlySalesStats = (ordersList = [], productsList = []) => {
@@ -592,7 +591,7 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
           if (prod?.name) productCostByName.set(String(prod.name).trim().toLowerCase(), unitCost);
         });
 
-        (Array.isArray(ordersList) ? ordersList : []).forEach(order => {
+        (Array.isArray(ordersList) ? ordersList : []).filter(o => SALE_STATUSES.includes(o?.status)).forEach(order => {
           const amount = Number(order?.total || 0);
           totalRevenue += amount;
           totalOrders += 1;
@@ -709,6 +708,9 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
         );
       };
 
+      // Usuario interno del panel: debe existir en Supabase (Authentication > Users)
+      const ADMIN_EMAIL = 'admin@bcotech.local';
+
       function App() {
         const initialConfig = useMemo(() => getInitialSupabaseConfig(), []);
         const [theme, setTheme] = useState('dark');
@@ -723,14 +725,11 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
         const [settings, setSettings] = useState(DEFAULT_SETTINGS);
         const [settingsDraft, setSettingsDraft] = useState(DEFAULT_SETTINGS);
 
-        const [supabaseConfig, setSupabaseConfig] = useState(initialConfig);
+        const [supabaseConfig] = useState(initialConfig);
         const [supabaseClient, setSupabaseClient] = useState(null);
         const [supabaseStatus, setSupabaseStatus] = useState('disconnected');
         const [ordersSyncMessage, setOrdersSyncMessage] = useState('');
         const [productsSyncMessage, setProductsSyncMessage] = useState('');
-        const [supabaseUrlDraft, setSupabaseUrlDraft] = useState(initialConfig.url);
-        const [supabaseKeyDraft, setSupabaseKeyDraft] = useState(initialConfig.key);
-
         const [cart, setCart] = useState(() => {
           try {
             return JSON.parse(localStorage.getItem('bco_tech_cart') || '[]');
@@ -766,6 +765,7 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
         const [aiMessages, setAiMessages] = useState(INITIAL_AI_MESSAGES);
 
         const [editingProduct, setEditingProduct] = useState(null);
+        const [offerDrafts, setOfferDrafts] = useState({});
         const [checkoutForm, setCheckoutForm] = useState({
           name: '',
           phone: '',
@@ -790,7 +790,7 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
         });
 
         useEffect(() => {
-          localStorage.setItem('bco_tech_cart', JSON.stringify(cart));
+          try { localStorage.setItem('bco_tech_cart', JSON.stringify(cart)); } catch {}
         }, [cart]);
 
         useEffect(() => {
@@ -804,7 +804,12 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
 
         const showToast = (msg) => {
           setToastMessage(msg);
-          setTimeout(() => setToastMessage(null), 3500);
+          setTimeout(() => setToastMessage(null), 7000);
+        };
+
+        const isAdminSession = async (client) => {
+          const { data, error } = await client.rpc('is_admin');
+          return !error && data === true;
         };
 
         const fetchProductsFromClient = async (client) => {
@@ -815,7 +820,13 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
             return;
           }
           if (Array.isArray(res.data) && res.data.length > 0) {
-            setProducts(res.data);
+            // Los costos solo se entregan al administrador (permisos de la base de datos)
+            const costs = await client.from('product_costs').select('*');
+            const byId = new Map((costs.data || []).map(c => [c.product_id, c.cost]));
+            setProducts(res.data.map(p => {
+              const { cost, ...rest } = p;
+              return byId.has(p.id) ? { ...rest, cost: byId.get(p.id) } : rest;
+            }));
             setProductsSyncMessage(`Catálogo en vivo (${res.data.length} producto(s))`);
           }
         };
@@ -834,115 +845,145 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
         };
 
         useEffect(() => {
-          let intervalId = null;
-          let channel = null;
-
-          if (supabaseConfig.url && supabaseConfig.key && window.supabase) {
-            try {
-              const client = window.supabase.createClient(supabaseConfig.url, supabaseConfig.key);
-              setSupabaseClient(client);
-
-              const initialSync = async () => {
-                const { data: catData, error: catErr } = await client.from('categories').select('*');
-                if (catErr) {
-                  setSupabaseStatus('error');
-                  return;
-                }
-                setSupabaseStatus('connected');
-                if (catData && catData.length > 0) setCategories(catData);
-                await fetchProductsFromClient(client);
-                await fetchOrdersFromClient(client);
-                const { data: setDb } = await client.from('store_settings').select('*').single();
-                if (setDb) {
-                  const savedHero = localStorage.getItem('bco_hero_image');
-                  setSettings(prev => ({ ...prev, ...setDb, hero_image: savedHero || setDb.hero_image || prev.hero_image }));
-                }
-              };
-
-              initialSync();
-
-              if (typeof client.channel === 'function') {
-                channel = client
-                  .channel('bco-tech-global-sync')
-                  .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => {
-                    fetchProductsFromClient(client);
-                  })
-                  .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
-                    fetchOrdersFromClient(client);
-                  })
-                  .subscribe();
-              }
-
-              intervalId = setInterval(() => {
-                fetchProductsFromClient(client);
-                fetchOrdersFromClient(client);
-              }, 8000);
-
-              return () => {
-                if (intervalId) clearInterval(intervalId);
-                if (channel && typeof client.removeChannel === 'function') {
-                  client.removeChannel(channel);
-                }
-              };
-            } catch {
-              setSupabaseStatus('error');
-            }
-          } else {
-            setSupabaseClient(null);
+          if (!supabaseConfig.url || !supabaseConfig.key || !window.supabase) {
             setSupabaseStatus('disconnected');
+            return;
           }
+          let client;
+          try {
+            client = window.supabase.createClient(supabaseConfig.url, supabaseConfig.key);
+          } catch {
+            setSupabaseStatus('error');
+            return;
+          }
+          setSupabaseClient(client);
+
+          (async () => {
+            const { data: catData, error: catErr } = await client.from('categories').select('*');
+            if (catErr) {
+              setSupabaseStatus('error');
+              return;
+            }
+            setSupabaseStatus('connected');
+            if (catData && catData.length > 0) setCategories(catData);
+            await fetchProductsFromClient(client);
+            const { data: setDb } = await client.from('store_settings').select('*').single();
+            if (setDb) {
+              setSettings(prev => ({ ...prev, ...setDb, hero_image: setDb.hero_image || prev.hero_image }));
+            }
+            if (await isAdminSession(client)) {
+              setAdminAuth(true);
+              await fetchProductsFromClient(client);
+            }
+          })();
+
+          const intervalId = setInterval(() => fetchProductsFromClient(client), 30000);
+          return () => clearInterval(intervalId);
         }, [supabaseConfig]);
 
-        const shareableLink = useMemo(() => {
-          const cleanUrl = (supabaseConfig.url || '').trim();
-          const cleanKey = (supabaseConfig.key || '').trim();
-          if (!cleanUrl || !cleanKey) return '';
-          const base = window.location.href.split('#')[0].split('?')[0];
-          return `${base}?sp_url=${encodeURIComponent(cleanUrl)}&sp_key=${encodeURIComponent(cleanKey)}`;
-        }, [supabaseConfig]);
+        // Los pedidos solo se descargan con sesión de administrador
+        useEffect(() => {
+          if (!adminAuth || !supabaseClient) {
+            setOrders([]);
+            return;
+          }
+          fetchOrdersFromClient(supabaseClient);
+          const id = setInterval(() => fetchOrdersFromClient(supabaseClient), 15000);
+          return () => clearInterval(id);
+        }, [adminAuth, supabaseClient]);
+
+        const handleAdminLogin = async (e) => {
+          e.preventDefault();
+          if (!supabaseClient) return showToast('Sin conexión con la base de datos');
+          const { error } = await supabaseClient.auth.signInWithPassword({ email: ADMIN_EMAIL, password: adminPasswordInput });
+          if (error) {
+            const causes = {
+              'Invalid login credentials': 'Contraseña incorrecta, o falta crear el usuario ' + ADMIN_EMAIL + ' en Supabase',
+              'Email not confirmed': 'El usuario no está confirmado en Supabase'
+            };
+            return showToast(causes[error.message] || `No se pudo entrar: ${error.message}`);
+          }
+          if (!(await isAdminSession(supabaseClient))) {
+            await supabaseClient.auth.signOut();
+            return showToast('La contraseña es correcta, pero falta dar permiso de administrador (ejecuta el SQL)');
+          }
+          setAdminPasswordInput('');
+          setAdminAuth(true);
+          fetchProductsFromClient(supabaseClient);
+        };
+
+        const handleAdminLogout = async () => {
+          setAdminAuth(false);
+          setProducts(prev => prev.map(({ cost, ...p }) => p));
+          if (supabaseClient) await supabaseClient.auth.signOut();
+        };
+
+        const updateOrderStatus = async (id, status) => {
+          const { error } = await supabaseClient.from('orders').update({ status }).eq('id', id);
+          if (error) return showToast(`No se pudo cambiar el estado: ${error.message}`);
+          await fetchOrdersFromClient(supabaseClient);
+          await fetchProductsFromClient(supabaseClient);
+        };
 
         const filteredProducts = useMemo(() => {
           return products.filter(p => {
             if (!p.active) return false;
             const matchCat = selectedCategory === 'all' || p.category === selectedCategory;
-            const matchSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase());
+            const matchSearch = normalizeNlpText(`${p.name} ${p.description || ''}`).includes(normalizeNlpText(searchQuery));
             const matchSale = onlyOnSale ? p.on_sale : true;
             return matchCat && matchSearch && matchSale;
           });
         }, [products, selectedCategory, searchQuery, onlyOnSale]);
 
+        const stockOf = (product) => product.stock === null || product.stock === undefined ? Infinity : Number(product.stock);
+
         const addToCart = (product, qty = 1) => {
+          const inCart = cart.find(i => i.product.id === product.id)?.quantity || 0;
+          if (inCart + qty > stockOf(product)) {
+            showToast(stockOf(product) > 0 ? `Solo hay ${stockOf(product)} disponible(s)` : 'Producto agotado');
+            return;
+          }
           setCart(prev => {
             const exists = prev.find(i => i.product.id === product.id);
             if (exists) return prev.map(i => i.product.id === product.id ? { ...i, quantity: i.quantity + qty } : i);
-            return [...prev, { product, quantity: qty }];
+            const { cost, ...publicProduct } = product;
+            return [...prev, { product: publicProduct, quantity: qty }];
           });
           showToast(`"${product.name}" agregado al carrito`);
         };
 
         const updateCartQty = (id, delta) => {
-          setCart(prev => prev.map(i => i.product.id === id ? { ...i, quantity: i.quantity + delta } : i).filter(i => i.quantity > 0));
+          const live = products.find(p => p.id === id);
+          setCart(prev => prev.map(i => {
+            if (i.product.id !== id) return i;
+            const next = i.quantity + delta;
+            return delta > 0 && next > stockOf(live || i.product) ? i : { ...i, quantity: next };
+          }).filter(i => i.quantity > 0));
         };
+
+        // Mantiene los precios del carrito iguales a los del catálogo
+        useEffect(() => {
+          setCart(prev => prev.map(i => {
+            const live = products.find(p => p.id === i.product.id);
+            if (!live) return i;
+            const { cost, ...publicProduct } = live;
+            return { ...i, product: publicProduct };
+          }));
+        }, [products]);
 
         const cartTotal = cart.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
         const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
         const monthlyStats = useMemo(() => buildMonthlySalesStats(orders, products), [orders, products]);
 
         const persistOrderRecord = async (record) => {
-          setOrders(prev => [record, ...prev]);
-          if (supabaseClient) {
-            const { error } = await supabaseClient.from('orders').insert([record]);
-            if (error) {
-              setOrdersSyncMessage(`No se pudo guardar en Supabase: ${error.message}`);
-              showToast(`Aviso: ${error.message}`);
-              return false;
-            }
-            await fetchOrdersFromClient(supabaseClient);
-            return true;
-          } else {
-            setOrdersSyncMessage('Guardado solo en este navegador (sin conexión activa a Supabase)');
+          const failed = (reason) => {
+            showToast(`El pedido no se guardó en el sistema; envíalo por WhatsApp. ${reason}`);
             return false;
-          }
+          };
+          if (!supabaseClient) return failed('');
+          const items = record.items.map(({ product, quantity }) => ({ product: { id: product.id, name: product.name, price: product.price }, quantity }));
+          const { error } = await supabaseClient.from('orders').insert([{ ...record, items }]);
+          return error ? failed(error.message) : true;
         };
 
         // Generador de Factura PDF nativa sin dependencias externas
@@ -951,6 +992,7 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
             const esc = (s = '') => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7E]/g, ' ').replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
             const lines = [];
             let y = 740;
+            const pages = [];
             const addLine = (txt, size = 10, bold = false, rgb = '0.08 0.08 0.08', x = 45) => {
               lines.push(`BT /${bold ? 'F2' : 'F1'} ${size} Tf ${rgb} rg 1 0 0 1 ${x} ${y} Tm (${esc(txt)}) Tj ET`);
             };
@@ -976,29 +1018,37 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
 
             y -= 20;
             (order.items || []).forEach(item => {
+              if (y < 90) {
+                pages.push(lines.splice(0).join('\n'));
+                y = 740;
+              }
               const qty = Number(item.quantity || 1);
               const unit = Number(item.product?.price || 0);
               addLine(`${qty}x`, 10, true, '0.1 0.1 0.1', 50);
-              addLine(`${item.product?.name || 'Producto'} ($${unit.toFixed(2)} c/u)`.slice(0, 56), 10, false, '0.1 0.1 0.1', 105);
-              addLine(`$${(qty * unit).toFixed(2)}`, 10, true, '0.1 0.1 0.1', 495);
+              addLine(`${item.product?.name || 'Producto'} (RD$${unit.toFixed(2)} c/u)`.slice(0, 56), 10, false, '0.1 0.1 0.1', 105);
+              addLine(`RD$${(qty * unit).toFixed(2)}`, 10, true, '0.1 0.1 0.1', 495);
               y -= 18;
             });
 
             y -= 8;
-            lines.push(`q 0.75 0.75 0.75 w 40 ${y} 572 ${y} l S Q`);
+            lines.push(`q 0.75 0.75 0.75 RG 40 ${y} m 572 ${y} l S Q`);
             y -= 24;
             addLine('TOTAL A PAGAR:', 13, true, '0.0 0.2 1.0', 360);
-            addLine(`$${Number(order.total || 0).toFixed(2)}`, 14, true, '0.05 0.05 0.05', 490);
+            addLine(`RD$${Number(order.total || 0).toFixed(2)}`, 14, true, '0.05 0.05 0.05', 475);
 
-            const streamContent = lines.join('\n');
-            const objects = [
-              '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
-              '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n',
-              '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> >>\nendobj\n',
-              `4 0 obj\n<< /Length ${streamContent.length} >>\nstream\n${streamContent}\nendstream\nendobj\n`,
-              '5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n',
-              '6 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>\nendobj\n'
+            pages.push(lines.join('\n'));
+            const kids = pages.map((_, i) => `${5 + i * 2} 0 R`).join(' ');
+            const bodies = [
+              '<< /Type /Catalog /Pages 2 0 R >>',
+              `<< /Type /Pages /Kids [${kids}] /Count ${pages.length} >>`,
+              '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+              '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>'
             ];
+            pages.forEach((content, i) => {
+              bodies.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents ${6 + i * 2} 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> >>`);
+              bodies.push(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
+            });
+            const objects = bodies.map((body, i) => `${i + 1} 0 obj\n${body}\nendobj\n`);
             let pdf = '%PDF-1.4\n';
             const offsets = [0];
             objects.forEach(o => { offsets.push(pdf.length); pdf += o; });
@@ -1021,7 +1071,7 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
         const handleCheckoutSubmit = async (e) => {
           e.preventDefault();
           if (cart.length === 0) return;
-          const orderId = 'ORD-' + Math.floor(100000 + Math.random() * 900000);
+          const orderId = 'ORD-' + String(Math.floor(Math.random() * 100000000)).padStart(8, '0');
           const cleanMainWa = String(settings.whatsapp || '').replace(/\D/g, '');
           const cleanInvoiceWa = String(settings.invoice_whatsapp || '').replace(/\D/g, '');
 
@@ -1038,13 +1088,13 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
             created_at: new Date().toISOString()
           };
 
-          await persistOrderRecord(newOrder);
+          const saving = persistOrderRecord(newOrder); // sin esperar: evita que se bloquee la ventana de WhatsApp
 
           let msg = `🛒 *NUEVO PEDIDO - BCO TECH* (#${orderId})\n👤 *Cliente:* ${checkoutForm.name}\n📞 *Teléfono:* ${checkoutForm.phone}\n📍 *Dirección:* ${checkoutForm.address}\n💳 *Pago:* ${checkoutForm.paymentMethod.toUpperCase()}\n\n📦 *PRODUCTOS:*\n`;
           cart.forEach(item => {
-            msg += `• ${item.quantity}x ${item.product.name} - $${(item.product.price * item.quantity).toFixed(2)}\n`;
+            msg += `• ${item.quantity}x ${item.product.name} - RD$${(item.product.price * item.quantity).toFixed(2)}\n`;
           });
-          msg += `\n💰 *TOTAL: $${cartTotal.toFixed(2)}*`;
+          msg += `\n💰 *TOTAL: RD$${cartTotal.toFixed(2)}*`;
 
           const waUrl = `https://wa.me/${cleanMainWa}?text=${encodeURIComponent(msg)}`;
           const invoiceWaUrl = cleanInvoiceWa ? `https://wa.me/${cleanInvoiceWa}?text=${encodeURIComponent(msg)}` : '';
@@ -1063,7 +1113,7 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
         const handleSpecialOrderSubmit = async (e) => {
           e.preventDefault();
           if (!specialOrderForm.productName.trim() || !specialOrderForm.customerName.trim() || !specialOrderForm.phone.trim()) return;
-          const orderId = 'ESP-' + Math.floor(100000 + Math.random() * 900000);
+          const orderId = 'ESP-' + String(Math.floor(Math.random() * 100000000)).padStart(8, '0');
           const cleanMainWa = String(settings.whatsapp || '').replace(/\D/g, '');
           const estimatedTotal = parseFloat(specialOrderForm.budget) || 0;
 
@@ -1089,23 +1139,23 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
             created_at: new Date().toISOString()
           };
 
-          await persistOrderRecord(specialOrder);
+          const saving = persistOrderRecord(specialOrder);
 
           let waMsg = `✨ *SOLICITUD DE PEDIDO ESPECIAL - BCO TECH* (#${orderId})\n👤 *Cliente:* ${specialOrder.customer_name}\n📞 *Teléfono:* ${specialOrder.phone}\n📦 *Producto Solicitado:* ${specialOrderForm.productName.trim()}`;
-          if (specialOrderForm.budget) waMsg += `\n💵 *Presupuesto estimado:* $${estimatedTotal.toFixed(2)}`;
+          if (specialOrderForm.budget) waMsg += `\n💵 *Presupuesto estimado:* RD$${estimatedTotal.toFixed(2)}`;
           if (specialOrderForm.referenceUrl) waMsg += `\n🔗 *Enlace / Referencia:* ${specialOrderForm.referenceUrl.trim()}`;
           if (specialOrderForm.details) waMsg += `\n📝 *Detalles:* ${specialOrderForm.details.trim()}`;
 
           window.open(`https://wa.me/${cleanMainWa}?text=${encodeURIComponent(waMsg)}`, '_blank');
           setSpecialOrderForm({ customerName: '', phone: '', productName: '', referenceUrl: '', budget: '', details: '' });
           setIsSpecialOrderOpen(false);
-          showToast('Solicitud de pedido especial enviada');
+          if (await saving) showToast('Solicitud registrada: envíala en WhatsApp');
         };
 
         const handleCustomSubmit = async (e) => {
           e.preventDefault();
           if (!customForm.customerName.trim() || !customForm.phone.trim() || !customForm.details.trim()) return;
-          const orderId = 'PER-' + Math.floor(100000 + Math.random() * 900000);
+          const orderId = 'PER-' + String(Math.floor(Math.random() * 100000000)).padStart(8, '0');
           const cleanMainWa = String(settings.whatsapp || '').replace(/\D/g, '');
 
           const customRecord = {
@@ -1130,7 +1180,7 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
             created_at: new Date().toISOString()
           };
 
-          await persistOrderRecord(customRecord);
+          const saving = persistOrderRecord(customRecord);
 
           let waMsg = `🎨 *SOLICITUD PERSONALIZADA - BCO TECH* (#${orderId})\n👤 *Cliente:* ${customRecord.customer_name}\n📞 *Teléfono:* ${customRecord.phone}\n🛠️ *Tipo:* ${customForm.itemType}`;
           if (customForm.colorStyle) waMsg += `\n🎨 *Estilo / Color:* ${customForm.colorStyle.trim()}`;
@@ -1139,7 +1189,7 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
           window.open(`https://wa.me/${cleanMainWa}?text=${encodeURIComponent(waMsg)}`, '_blank');
           setCustomForm({ customerName: '', phone: '', itemType: 'Setup / PC / Periférico', colorStyle: '', details: '' });
           setIsCustomOpen(false);
-          showToast('Solicitud personalizada enviada');
+          if (await saving) showToast('Solicitud registrada: envíala en WhatsApp');
         };
 
         const askMiniAi = (questionText) => {
@@ -1154,7 +1204,7 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
               query: q,
               products,
               categories,
-              orders,
+              orders: [], // el chat público nunca ve pedidos
               settings,
               lastContext: aiLastContext
             });
@@ -1178,60 +1228,57 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
         };
 
         const saveProduct = async (prod) => {
-          if (prod.id) {
-            setProducts(prev => prev.map(p => p.id === prod.id ? prod : p));
-            if (supabaseClient) {
-              const { error } = await supabaseClient.from('products').update(prod).eq('id', prod.id);
-              if (error) {
-                showToast(`Aviso Supabase: ${error.message}`);
-              } else {
-                await fetchProductsFromClient(supabaseClient);
-              }
-            }
-          } else {
-            const created = { ...prod, id: 'prod-' + Date.now() };
-            setProducts(prev => [created, ...prev]);
-            if (supabaseClient) {
-              const { error } = await supabaseClient.from('products').insert([created]);
-              if (error) {
-                showToast(`Aviso Supabase: ${error.message}`);
-              } else {
-                await fetchProductsFromClient(supabaseClient);
-              }
-            }
+          if (!String(prod.name || '').trim() || !(Number(prod.price) > 0)) return showToast('Escribe un nombre y un precio mayor que 0');
+          if (!supabaseClient) return showToast('Sin conexión: no se guardó');
+          const { cost, created_at, ...row } = { ...prod, id: prod.id || 'prod-' + Date.now() };
+          const { error } = await supabaseClient.from('products').upsert([row]);
+          if (error) return showToast(`No se guardó: ${error.message}`);
+          if (cost !== undefined && cost !== null) {
+            const { error: costError } = await supabaseClient.from('product_costs').upsert([{ product_id: row.id, cost }]);
+            if (costError) return showToast(`Producto guardado, pero el costo no: ${costError.message}`);
           }
+          const saved = { ...row, cost };
+          setProducts(prev => prev.some(p => p.id === row.id) ? prev.map(p => p.id === row.id ? saved : p) : [saved, ...prev]);
           setEditingProduct(null);
           setPhotoUrlDraft('');
-          showToast('Producto guardado y sincronizado');
+          showToast('Producto guardado');
+        };
+
+        const applyOffer = async (p) => {
+          const normalPrice = Number(p.on_sale && p.original_price ? p.original_price : p.price);
+          const offerPrice = Number(offerDrafts[p.id]);
+          if (!(offerPrice > 0 && offerPrice < normalPrice)) return showToast(`El precio de oferta debe ser mayor que 0 y menor que RD$${normalPrice.toFixed(2)}`);
+          await saveProduct({ ...p, price: offerPrice, original_price: normalPrice, on_sale: true });
+          setOfferDrafts(prev => ({ ...prev, [p.id]: '' }));
+        };
+
+        const removeOffer = async (p) => {
+          const normalPrice = Number(p.original_price) > Number(p.price) ? Number(p.original_price) : Number(p.price);
+          await saveProduct({ ...p, price: normalPrice, original_price: null, on_sale: false });
         };
 
         const deleteProduct = async (id) => {
+          if (!window.confirm('¿Eliminar este producto?')) return;
+          if (!supabaseClient) return showToast('Sin conexión: no se eliminó');
+          const { error } = await supabaseClient.from('products').delete().eq('id', id);
+          if (error) return showToast(`No se eliminó: ${error.message}`);
           setProducts(prev => prev.filter(item => item.id !== id));
-          if (supabaseClient) {
-            const { error } = await supabaseClient.from('products').delete().eq('id', id);
-            if (error) {
-              showToast(`Aviso Supabase: ${error.message}`);
-            } else {
-              await fetchProductsFromClient(supabaseClient);
-            }
-          }
           showToast('Producto eliminado');
         };
 
         const saveSettings = async (e) => {
           e.preventDefault();
-          const heroImg = settingsDraft.hero_image || settings.hero_image;
-          if (heroImg) localStorage.setItem('bco_hero_image', heroImg);
+          if (!supabaseClient) return showToast('Sin conexión: no se guardó');
           const cleanSettings = {
             ...settingsDraft,
-            hero_image: heroImg,
+            hero_image: settingsDraft.hero_image || settings.hero_image,
             whatsapp: String(settingsDraft.whatsapp || '').replace(/\D/g, '') || '18098435918',
             invoice_whatsapp: String(settingsDraft.invoice_whatsapp || '').replace(/\D/g, '')
           };
+          const { updated_at, ...row } = cleanSettings;
+          const { error } = await supabaseClient.from('store_settings').upsert([{ ...row, id: 1 }]);
+          if (error) return showToast(`No se guardó: ${error.message}`);
           setSettings(cleanSettings);
-          if (supabaseClient) {
-            await supabaseClient.from('store_settings').upsert([{ id: 1, ...cleanSettings }]);
-          }
           showToast('Ajustes guardados');
         };
 
@@ -1331,6 +1378,7 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
 
                 {/* Catálogo y filtros */}
                 <section id="catalogo" className="space-y-6">
+              <input type="search" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Buscar productos..." aria-label="Buscar productos" className="md:hidden w-full bg-gray-100 dark:bg-[#121824] text-base rounded-full px-4 py-2 border border-gray-700" />
                   <div className="flex flex-wrap gap-2">
                     <button onClick={() => setSelectedCategory('all')} className={`px-4 py-2 rounded-xl text-xs font-bold uppercase border ${selectedCategory === 'all' ? 'bg-[#8CFF00] text-black border-[#8CFF00]' : 'border-gray-300 dark:border-gray-800'}`}>
                       Todos
@@ -1357,12 +1405,12 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
                         </div>
                         <div className="p-4 pt-0 space-y-3">
                           <div className="flex items-baseline gap-2">
-                            <span className="text-lg font-black font-display">${Number(prod.price).toFixed(2)}</span>
-                            {prod.on_sale && prod.original_price && <span className="text-xs text-gray-400 line-through">${Number(prod.original_price).toFixed(2)}</span>}
+                            <span className="text-lg font-black font-display">RD${Number(prod.price).toFixed(2)}</span>
+                            {prod.on_sale && prod.original_price && <span className="text-xs text-gray-400 line-through">RD${Number(prod.original_price).toFixed(2)}</span>}
                           </div>
                           <div className="grid grid-cols-2 gap-2">
-                            <button onClick={() => addToCart(prod, 1)} className="bg-[#8CFF00] text-black font-bold py-2 rounded-xl text-xs hover:bg-[#7ce000]">Agregar</button>
-                            <a href={`https://wa.me/${settings.whatsapp}?text=${encodeURIComponent(`Hola BCO Tech, quiero consultar por: ${prod.name} ($${Number(prod.price).toFixed(2)})`)}`} target="_blank" rel="noreferrer" className="border border-green-500/40 text-green-400 font-bold py-2 rounded-xl text-xs text-center hover:bg-green-500 hover:text-white">
+                            <button onClick={() => addToCart(prod, 1)} disabled={stockOf(prod) <= 0} className="bg-[#8CFF00] text-black font-bold py-2 rounded-xl text-xs hover:bg-[#7ce000] disabled:opacity-40">{stockOf(prod) <= 0 ? 'Agotado' : 'Agregar'}</button>
+                            <a href={`https://wa.me/${settings.whatsapp}?text=${encodeURIComponent(`Hola BCO Tech, quiero consultar por: ${prod.name} (RD$${Number(prod.price).toFixed(2)})`)}`} target="_blank" rel="noreferrer" className="border border-green-500/40 text-green-400 font-bold py-2 rounded-xl text-xs text-center hover:bg-green-500 hover:text-white">
                               WhatsApp
                             </a>
                           </div>
@@ -1471,7 +1519,7 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
                                         <p className="font-bold text-[11px] text-white truncate">{prod.name}</p>
                                         <div className="flex items-center gap-1.5">
                                           <span className="text-[#8CFF00] font-black font-display text-[11px]">
-                                            ${Number(prod.price).toFixed(2)}
+                                            RD${Number(prod.price).toFixed(2)}
                                           </span>
                                           {prod.on_sale && (
                                             <span className="text-[9px] px-1.5 py-0.2 bg-[#0033FF] text-white rounded font-bold">
@@ -1575,20 +1623,9 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
               /* Panel de Administración */
               <main className="max-w-6xl mx-auto px-4 py-10">
                 {!adminAuth ? (
-                  <form onSubmit={e => {
-                    e.preventDefault();
-                    if (adminPasswordInput === 'bcotech2026' || adminPasswordInput === 'admin') {
-                      setAdminAuth(true);
-                      if (supabaseClient) {
-                        fetchProductsFromClient(supabaseClient);
-                        fetchOrdersFromClient(supabaseClient);
-                      }
-                    } else {
-                      showToast('Clave incorrecta');
-                    }
-                  }} className="max-w-sm mx-auto bg-white dark:bg-[#121824] p-6 rounded-3xl border border-gray-800 space-y-4">
-                    <div className="flex items-center gap-2 font-display font-bold uppercase"><LockIcon className="h-5 w-5 text-[#8CFF00]" /> Admin BCO Tech</div>
-                    <input type="password" autoComplete="off" required value={adminPasswordInput} onChange={e => setAdminPasswordInput(e.target.value)} placeholder="Contraseña" className="w-full bg-gray-100 dark:bg-[#0A0D14] rounded-xl px-4 py-2.5 text-sm border border-gray-700" />
+                  <form onSubmit={handleAdminLogin} className="max-w-sm mx-auto bg-white dark:bg-[#121824] p-6 rounded-3xl border border-gray-800 space-y-4">
+                <div className="flex items-center gap-2 font-display font-bold uppercase"><LockIcon className="h-5 w-5 text-[#8CFF00]" /> Admin BCO Tech</div>
+                    <input type="password" autoComplete="current-password" required value={adminPasswordInput} onChange={e => setAdminPasswordInput(e.target.value)} placeholder="Contraseña" className="w-full bg-gray-100 dark:bg-[#0A0D14] rounded-xl px-4 py-2.5 text-sm border border-gray-700" />
                     <button type="submit" className="w-full bg-[#8CFF00] text-black font-extrabold py-3 rounded-xl text-xs uppercase">Entrar</button>
                   </form>
                 ) : (
@@ -1597,7 +1634,8 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
                       <div className="flex flex-wrap gap-2">
                         {[
                           { id: 'products', label: 'Productos' },
-                          { id: 'orders', label: `Pedidos (${orders.length})` },
+                          { id: 'offers', label: `Ofertas (${products.filter(p => p.on_sale).length})` },
+                    { id: 'orders', label: `Pedidos (${orders.length})` },
                           { id: 'stats', label: 'Estadísticas' },
                           { id: 'settings', label: 'Ajustes' },
                           { id: 'supabase', label: 'Supabase' }
@@ -1613,7 +1651,7 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
                           </button>
                         ))}
                       </div>
-                      <button onClick={() => setAdminAuth(false)} className="px-3 py-2 rounded-xl bg-red-500/15 text-red-400 text-xs font-bold flex items-center gap-1">
+                      <button onClick={handleAdminLogout} className="px-3 py-2 rounded-xl bg-red-500/15 text-red-400 text-xs font-bold flex items-center gap-1">
                         <LogOutIcon className="h-4 w-4" /> Salir
                       </button>
                     </div>
@@ -1647,7 +1685,7 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
                                 <div>
                                   <p className="font-bold text-sm">{p.name}</p>
                                   <p className="text-gray-400">
-                                    Venta: ${Number(p.price).toFixed(2)} • Costo: ${Number(p.cost ?? Number(p.price || 0) * 0.65).toFixed(2)} • Ganancia/u: ${(Number(p.price || 0) - Number(p.cost ?? Number(p.price || 0) * 0.65)).toFixed(2)} • {p.category}
+                                    Venta: RD${Number(p.price).toFixed(2)} • Costo: RD${Number(p.cost ?? Number(p.price || 0) * 0.65).toFixed(2)} • Ganancia/u: RD${(Number(p.price || 0) - Number(p.cost ?? Number(p.price || 0) * 0.65)).toFixed(2)} • {p.category}
                                   </p>
                                 </div>
                               </div>
@@ -1661,7 +1699,36 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
                       </div>
                     )}
 
-                    {/* Pestaña Pedidos */}
+                    {/* Pestaña Ofertas */}
+                {adminTab === 'offers' && (
+                  <div className="bg-white dark:bg-[#121824] p-6 rounded-3xl border border-gray-800 space-y-4 text-xs">
+                    <div>
+                      <h2 className="font-display font-bold uppercase">Ofertas</h2>
+                      <p className="text-gray-400 mt-0.5">Escribe el precio rebajado y pulsa Aplicar. Al quitar la oferta vuelve el precio normal.</p>
+                    </div>
+                    <div className="divide-y divide-gray-800">
+                      {products.map(p => (
+                        <div key={p.id} className="py-3 flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <p className="font-bold text-sm">{p.name}</p>
+                            <p className="text-gray-400">
+                              {p.on_sale
+                                ? <>En oferta: <span className="text-[#8CFF00] font-bold">RD${Number(p.price).toFixed(2)}</span>{p.original_price ? <> (antes RD${Number(p.original_price).toFixed(2)})</> : null}</>
+                                : <>Precio normal: RD${Number(p.price).toFixed(2)}</>}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <input type="number" min="0" step="0.01" aria-label={`Precio de oferta de ${p.name}`} placeholder="Precio oferta" value={offerDrafts[p.id] || ''} onChange={e => setOfferDrafts(prev => ({ ...prev, [p.id]: e.target.value }))} className="w-28 bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2" />
+                            <button type="button" onClick={() => applyOffer(p)} className="px-3 py-2 rounded-xl bg-[#8CFF00] text-black font-bold">Aplicar</button>
+                            {p.on_sale && <button type="button" onClick={() => removeOffer(p)} className="px-3 py-2 rounded-xl bg-red-500/15 text-red-400 font-bold">Quitar</button>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Pestaña Pedidos */}
                     {adminTab === 'orders' && (
                       <div className="bg-white dark:bg-[#121824] p-6 rounded-3xl border border-gray-800 space-y-4 text-xs">
                         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1683,9 +1750,11 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
                               <div key={o.id || o.order_number || idx} className="p-3 rounded-2xl bg-[#0A0D14] border border-gray-800 flex items-center justify-between gap-3">
                                 <div>
                                   <p className="font-bold text-[#8CFF00]">{o.id || o.order_number || 'ORD'} • {o.customer_name}</p>
-                                  <p className="text-gray-400">{o.phone} • ${Number(o.total || 0).toFixed(2)}</p>
+                                  <p className="text-gray-400">{o.phone} • RD${Number(o.total || 0).toFixed(2)}</p>
                                 </div>
-                                <span className="px-2.5 py-1 rounded-xl bg-gray-800 font-bold">{o.status || 'Nuevo'}</span>
+                                <select value={o.status || 'Nuevo'} onChange={e => updateOrderStatus(o.id, e.target.value)} className="px-2 py-1 rounded-xl bg-gray-800 text-gray-100 font-bold">
+                              {ORDER_STATUSES.map(st => <option key={st} value={st}>{st}</option>)}
+                            </select>
                               </div>
                             ))}
                           </div>
@@ -1699,7 +1768,7 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div>
                             <h2 className="font-display font-bold uppercase text-base">Estadísticas de Ventas Mensuales</h2>
-                            <p className="text-gray-400 mt-0.5">Resumen calculado en tiempo real según tus pedidos registrados</p>
+                            <p className="text-gray-400 mt-0.5">Solo cuenta pedidos en estado Confirmado o Entregado</p>
                           </div>
                           {supabaseClient && (
                             <button
@@ -1716,17 +1785,17 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
                           <div className="p-4 rounded-2xl bg-[#0A0D14] border border-gray-800 space-y-1">
                             <p className="text-[11px] uppercase font-bold text-gray-400">Ventas ({monthlyStats.currentMonth.fullLabel})</p>
                             <p className="text-xl font-black font-display text-[#8CFF00]">
-                              ${monthlyStats.currentMonth.revenue.toFixed(2)}
+                              RD${monthlyStats.currentMonth.revenue.toFixed(2)}
                             </p>
                             <p className="text-[11px] text-gray-400">
-                              Ganancia mes: ${Number(monthlyStats.currentMonth.profit || 0).toFixed(2)} ({monthlyStats.currentMonth.ordersCount} ped.)
+                              Ganancia mes: RD${Number(monthlyStats.currentMonth.profit || 0).toFixed(2)} ({monthlyStats.currentMonth.ordersCount} ped.)
                             </p>
                           </div>
 
                           <div className="p-4 rounded-2xl bg-[#0A0D14] border border-gray-800 space-y-1">
                             <p className="text-[11px] uppercase font-bold text-gray-400">Precio de Venta Total</p>
                             <p className="text-xl font-black font-display text-white">
-                              ${monthlyStats.totalRevenue.toFixed(2)}
+                              RD${monthlyStats.totalRevenue.toFixed(2)}
                             </p>
                             <p className="text-[11px] text-gray-400">Ingreso bruto acumulado</p>
                           </div>
@@ -1734,7 +1803,7 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
                           <div className="p-4 rounded-2xl bg-[#0A0D14] border border-gray-800 space-y-1">
                             <p className="text-[11px] uppercase font-bold text-gray-400">Costo Total Productos</p>
                             <p className="text-xl font-black font-display text-amber-400">
-                              ${monthlyStats.totalCost.toFixed(2)}
+                              RD${monthlyStats.totalCost.toFixed(2)}
                             </p>
                             <p className="text-[11px] text-gray-400">Lo que te costó el inventario vendido</p>
                           </div>
@@ -1742,10 +1811,10 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
                           <div className="p-4 rounded-2xl bg-[#0A0D14] border border-gray-800 space-y-1">
                             <p className="text-[11px] uppercase font-bold text-gray-400">Ganancias Totales</p>
                             <p className="text-xl font-black font-display text-[#8CFF00]">
-                              ${monthlyStats.totalProfit.toFixed(2)}
+                              RD${monthlyStats.totalProfit.toFixed(2)}
                             </p>
                             <p className="text-[11px] text-gray-400">
-                              Ventas menos costo • Ticket prom.: ${monthlyStats.avgTicket.toFixed(2)}
+                              Ventas menos costo • Ticket prom.: RD${monthlyStats.avgTicket.toFixed(2)}
                             </p>
                           </div>
                         </div>
@@ -1753,14 +1822,14 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
                         <div className="p-5 rounded-2xl bg-[#0A0D14] border border-gray-800 space-y-4">
                           <div className="flex items-center justify-between">
                             <h3 className="font-bold uppercase text-xs text-gray-200">Ingresos por Mes (Últimos 6 meses)</h3>
-                            <span className="text-[11px] text-[#8CFF00] font-bold">USD ($)</span>
+                            <span className="text-[11px] text-[#8CFF00] font-bold">Pesos dominicanos (RD$)</span>
                           </div>
 
                           <div className="grid grid-cols-6 gap-2 sm:gap-4 items-end h-48 pt-6 border-b border-gray-800 pb-3">
                             {monthlyStats.months.map(m => (
                               <div key={m.key} className="h-full flex flex-col items-center justify-end gap-2">
                                 <span className="text-[10px] font-bold text-gray-300">
-                                  ${m.revenue >= 1000 ? `${(m.revenue / 1000).toFixed(1)}k` : m.revenue.toFixed(0)}
+                                  RD${m.revenue >= 1000 ? `${(m.revenue / 1000).toFixed(1)}k` : m.revenue.toFixed(0)}
                                 </span>
                                 <div className="w-full max-w-[44px] flex items-end justify-center flex-1">
                                   <div
@@ -1770,7 +1839,7 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
                                         ? 'bg-gradient-to-t from-[#0033FF] to-[#8CFF00]'
                                         : 'bg-gray-800/80'
                                     }`}
-                                    title={`${m.fullLabel}: $${m.revenue.toFixed(2)} (${m.ordersCount} pedidos)`}
+                                    title={`${m.fullLabel}: RD$${m.revenue.toFixed(2)} (${m.ordersCount} pedidos)`}
                                   />
                                 </div>
                               </div>
@@ -1831,36 +1900,7 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
                             <CopyIcon className="h-4 w-4" /> Copiar SQL
                           </button>
                         </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <input value={supabaseUrlDraft} onChange={e => setSupabaseUrlDraft(e.target.value)} placeholder="Project URL" className="bg-[#0A0D14] border border-gray-700 rounded-xl px-3 py-2" />
-                          <input type="text" value={supabaseKeyDraft} onChange={e => setSupabaseKeyDraft(e.target.value)} placeholder="Publishable / Anon Key" className="bg-[#0A0D14] border border-gray-700 rounded-xl px-3 py-2" />
-                        </div>
-                        <button
-                          onClick={() => {
-                            const cleanUrl = supabaseUrlDraft.trim();
-                            const cleanKey = supabaseKeyDraft.trim();
-                            localStorage.setItem('bco_sp_url', cleanUrl);
-                            localStorage.setItem('bco_sp_key', cleanKey);
-                            setSupabaseConfig({ url: cleanUrl, key: cleanKey });
-                            showToast('Supabase guardado');
-                          }}
-                          className="bg-[#8CFF00] text-black font-extrabold px-5 py-2 rounded-xl uppercase"
-                        >
-                          Conectar
-                        </button>
-
-                        {shareableLink && (
-                          <div className="p-3.5 rounded-2xl bg-[#0A0D14] border border-[#8CFF00]/40 space-y-2">
-                            <p className="text-[11px] font-bold uppercase text-[#8CFF00]">Enlace para otros dispositivos</p>
-                            <input
-                              type="text"
-                              readOnly
-                              value={shareableLink}
-                              onFocus={e => e.target.select()}
-                              className="w-full bg-[#121824] border border-gray-700 rounded-xl px-3 py-2 text-[11px] text-gray-200 select-all"
-                            />
-                          </div>
-                        )}
+                        <p className="text-gray-400">Copia el SQL y ejecútalo en el editor SQL de Supabase. La conexión se configura en el código de la página.</p>
                       </div>
                     )}
                   </div>
@@ -1887,7 +1927,7 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <input required value={specialOrderForm.productName} onChange={e => setSpecialOrderForm({ ...specialOrderForm, productName: e.target.value })} placeholder="Producto que deseas solicitar *" className="sm:col-span-2 bg-[#0A0D14] border border-gray-700 rounded-xl px-3 py-2" />
-                      <input type="number" min="0" step="0.01" value={specialOrderForm.budget} onChange={e => setSpecialOrderForm({ ...specialOrderForm, budget: e.target.value })} placeholder="Presupuesto ($)" className="bg-[#0A0D14] border border-gray-700 rounded-xl px-3 py-2" />
+                      <input type="number" min="0" step="0.01" value={specialOrderForm.budget} onChange={e => setSpecialOrderForm({ ...specialOrderForm, budget: e.target.value })} placeholder="Presupuesto (RD$)" className="bg-[#0A0D14] border border-gray-700 rounded-xl px-3 py-2" />
                     </div>
                     <input value={specialOrderForm.referenceUrl} onChange={e => setSpecialOrderForm({ ...specialOrderForm, referenceUrl: e.target.value })} placeholder="Enlace de referencia (opcional)" className="w-full bg-[#0A0D14] border border-gray-700 rounded-xl px-3 py-2" />
                     <textarea rows={2} value={specialOrderForm.details} onChange={e => setSpecialOrderForm({ ...specialOrderForm, details: e.target.value })} placeholder="Detalles, modelo, capacidad o color..." className="w-full bg-[#0A0D14] border border-gray-700 rounded-xl px-3 py-2" />
@@ -1946,7 +1986,7 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
                       <div key={item.product.id} className="flex items-center justify-between gap-3 bg-[#0A0D14] p-3 rounded-2xl border border-gray-800 text-xs">
                         <div>
                           <p className="font-bold">{item.product.name}</p>
-                          <p className="text-[#8CFF00] font-bold">${Number(item.product.price).toFixed(2)}</p>
+                          <p className="text-[#8CFF00] font-bold">RD${Number(item.product.price).toFixed(2)}</p>
                         </div>
                         <div className="flex items-center gap-2">
                           <button onClick={() => updateCartQty(item.product.id, -1)} className="p-1 bg-gray-800 rounded"><MinusIcon className="h-3 w-3" /></button>
@@ -1958,7 +1998,7 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
                   </div>
                   {cart.length > 0 && (
                     <div className="pt-4 border-t border-gray-800 space-y-3">
-                      <div className="flex justify-between font-bold"><span>Total:</span><span className="text-[#8CFF00] font-display">${cartTotal.toFixed(2)}</span></div>
+                      <div className="flex justify-between font-bold"><span>Total:</span><span className="text-[#8CFF00] font-display">RD${cartTotal.toFixed(2)}</span></div>
                       <button onClick={() => setIsCheckoutOpen(true)} className="w-full bg-[#8CFF00] text-black font-extrabold py-3 rounded-2xl text-xs uppercase font-display">Continuar</button>
                     </div>
                   )}
@@ -1973,7 +2013,7 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
                   <button onClick={() => setSelectedProduct(null)} className="absolute top-4 right-4"><XIcon className="h-5 w-5" /></button>
                   <img src={selectedProduct.images?.[0]} alt={selectedProduct.name} className="w-full h-56 object-cover rounded-2xl" />
                   <h3 className="text-lg font-bold font-display">{selectedProduct.name}</h3>
-                  <p className="text-xl font-black text-[#8CFF00] font-display">${Number(selectedProduct.price).toFixed(2)}</p>
+                  <p className="text-xl font-black text-[#8CFF00] font-display">RD${Number(selectedProduct.price).toFixed(2)}</p>
                   <p className="text-gray-300">{selectedProduct.description}</p>
                   <button onClick={() => { addToCart(selectedProduct, 1); setSelectedProduct(null); }} className="w-full bg-[#8CFF00] text-black font-extrabold py-3 rounded-xl uppercase">Agregar al Carrito</button>
                 </div>
@@ -2005,7 +2045,7 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
                 <div className="bg-white dark:bg-[#121824] border-2 border-[#8CFF00] rounded-3xl max-w-sm w-full p-6 space-y-4 relative text-xs">
                   <button onClick={() => setLastConfirmedOrder(null)} className="absolute top-4 right-4"><XIcon className="h-5 w-5" /></button>
                   <h3 className="text-base font-bold font-display">Factura #{lastConfirmedOrder.order.id}</h3>
-                  <p className="text-gray-400">Total: <span className="text-[#8CFF00] font-bold">${Number(lastConfirmedOrder.order.total).toFixed(2)}</span></p>
+                  <p className="text-gray-400">Total: <span className="text-[#8CFF00] font-bold">RD${Number(lastConfirmedOrder.order.total).toFixed(2)}</span></p>
                   <div className="grid grid-cols-2 gap-2">
                     <button onClick={() => generateInvoicePDF(lastConfirmedOrder.order)} className="bg-[#0033FF] text-white font-bold py-2.5 rounded-xl uppercase">PDF</button>
                     <a href={lastConfirmedOrder.waUrl} target="_blank" rel="noreferrer" className="bg-[#8CFF00] text-black font-extrabold py-2.5 rounded-xl uppercase text-center">WhatsApp</a>
@@ -2032,10 +2072,31 @@ CREATE POLICY "Public settings" ON public.store_settings FOR ALL USING (true) WI
                     </div>
                   </div>
                   <p className="text-[11px] text-[#8CFF00] font-bold">
-                    Ganancia por unidad: ${(Number(editingProduct.price || 0) - Number(editingProduct.cost ?? Number(editingProduct.price || 0) * 0.65)).toFixed(2)}
+                    Ganancia por unidad: RD${(Number(editingProduct.price || 0) - Number(editingProduct.cost ?? Number(editingProduct.price || 0) * 0.65)).toFixed(2)}
                   </p>
 
-                  {/* Carga de múltiples fotos (archivos comprimidos a WebP o URLs) */}
+                  <div className="grid grid-cols-2 gap-2">
+              <label className="block text-[10px] uppercase font-bold text-gray-400">Categoría
+                <select value={editingProduct.category || ''} onChange={e => setEditingProduct({ ...editingProduct, category: e.target.value })} className="w-full bg-[#0A0D14] border border-gray-700 rounded-xl px-3 py-2 mt-1">
+                  {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </label>
+              <label className="block text-[10px] uppercase font-bold text-gray-400">Existencias
+                <input type="number" min="0" step="1" value={editingProduct.stock ?? 0} onChange={e => setEditingProduct({ ...editingProduct, stock: Math.max(0, parseInt(e.target.value, 10) || 0) })} className="w-full bg-[#0A0D14] border border-gray-700 rounded-xl px-3 py-2 mt-1" />
+              </label>
+              <label className="block text-[10px] uppercase font-bold text-gray-400">Precio anterior
+                <input type="number" min="0" step="0.01" value={editingProduct.original_price ?? ''} onChange={e => setEditingProduct({ ...editingProduct, original_price: e.target.value === '' ? null : Number(e.target.value) })} className="w-full bg-[#0A0D14] border border-gray-700 rounded-xl px-3 py-2 mt-1" />
+              </label>
+              <div className="flex flex-col justify-end gap-1">
+                {[['active', 'Visible en tienda'], ['on_sale', 'En oferta']].map(([key, label]) => (
+                  <label key={key} className="flex items-center gap-2 font-bold">
+                    <input type="checkbox" checked={!!editingProduct[key]} onChange={e => setEditingProduct({ ...editingProduct, [key]: e.target.checked })} /> {label}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Carga de múltiples fotos (archivos comprimidos a WebP o URLs) */}
                   <div className="p-3 rounded-2xl bg-[#0A0D14] border border-dashed border-gray-700 space-y-2.5">
                     <label className="flex items-center gap-1.5 text-[10px] uppercase font-bold text-[#8CFF00]">
                       <UploadIcon className="h-3.5 w-3.5" /> Fotos del producto
