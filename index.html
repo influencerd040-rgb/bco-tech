@@ -162,6 +162,8 @@
 
         // 2. Buscar coincidencia directa con productos o categorías del catálogo
         const categoryAliases = {
+          relojes: ['reloj', 'relojes', 'smartwatch'],
+          covers: ['cover', 'covers', 'forro', 'funda'],
           auriculares: ['auricular', 'auriculares', 'audifono', 'audifonos', 'headset', 'cascos', 'anc', 'bluetooth', 'sonido'],
           teclados: ['teclado', 'teclados', 'mecanico', 'switches', 'rgb', 'keyboard'],
           mouse: ['mouse', 'raton', 'mousepad', 'dpi', 'superlight', 'inalambrico'],
@@ -420,7 +422,9 @@
         { id: 'mouse', name: 'Mouse & Mousepads' },
         { id: 'monitores', name: 'Monitores' },
         { id: 'accesorios', name: 'Accesorios' },
-        { id: 'gadgets', name: 'Gadgets' }
+        { id: 'gadgets', name: 'Gadgets' },
+        { id: 'relojes', name: 'Relojes' },
+        { id: 'covers', name: 'Covers' }
       ];
 
       const CATALOG_KEY = 'bco_catalog_v2';
@@ -454,7 +458,7 @@ ALTER TABLE public.store_settings ADD COLUMN IF NOT EXISTS hero_images JSONB DEF
 ALTER TABLE public.store_settings ADD COLUMN IF NOT EXISTS custom_logo_url TEXT;
 ALTER TABLE public.store_settings ADD COLUMN IF NOT EXISTS logo_pill_in_dark BOOLEAN DEFAULT TRUE;
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS stock_discounted BOOLEAN NOT NULL DEFAULT FALSE;
-INSERT INTO public.categories (id, name) VALUES ('auriculares','Auriculares'), ('teclados','Teclados'), ('mouse','Mouse & Mousepads'), ('monitores','Monitores'), ('accesorios','Accesorios'), ('gadgets','Gadgets') ON CONFLICT (id) DO NOTHING;
+INSERT INTO public.categories (id, name) VALUES ('auriculares','Auriculares'), ('teclados','Teclados'), ('mouse','Mouse & Mousepads'), ('monitores','Monitores'), ('accesorios','Accesorios'), ('gadgets','Gadgets'), ('relojes','Relojes'), ('covers','Covers') ON CONFLICT (id) DO NOTHING;
 
 -- Lista de administradores (nadie puede leerla ni cambiarla desde la web)
 CREATE TABLE IF NOT EXISTS public.admins (user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE);
