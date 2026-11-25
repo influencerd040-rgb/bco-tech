@@ -162,13 +162,13 @@
 
         // 2. Buscar coincidencia directa con productos o categorías del catálogo
         const categoryAliases = {
+          cargadores: ['cargador', 'cargadores'],
+          protectores: ['protector', 'protectores', 'cristal templado', 'mica'],
           relojes: ['reloj', 'relojes', 'smartwatch'],
           covers: ['cover', 'covers', 'forro', 'funda'],
           auriculares: ['auricular', 'auriculares', 'audifono', 'audifonos', 'headset', 'cascos', 'anc', 'bluetooth', 'sonido'],
-          teclados: ['teclado', 'teclados', 'mecanico', 'switches', 'rgb', 'keyboard'],
-          mouse: ['mouse', 'raton', 'mousepad', 'dpi', 'superlight', 'inalambrico'],
-          monitores: ['monitor', 'monitores', 'pantalla', 'ips', '180hz', 'hz', '2k', 'qhd'],
-          accesorios: ['accesorio', 'accesorios', 'cable', 'soporte', 'hub', 'cargador'],
+          teclados: ['teclado', 'teclados', 'mecanico', 'switches', 'rgb', 'keyboard', 'mouse', 'raton', 'mousepad', 'dpi', 'superlight', 'inalambrico'],
+          accesorios: ['accesorio', 'accesorios', 'cable', 'soporte', 'hub'],
           gadgets: ['gadget', 'gadgets', 'smart', 'inteligente', 'tech']
         };
 
@@ -332,7 +332,7 @@
             const minPrice = activeProducts.length ? Math.min(...activeProducts.map(p => Number(p.price))) : 0;
             const maxPrice = activeProducts.length ? Math.max(...activeProducts.map(p => Number(p.price))) : 0;
             return {
-              text: `🤔 No identifiqué una palabra clave exacta, pero puedo ayudarte con:\n• **Productos:** Tenemos ${activeProducts.length} artículos activos (desde **RD$${minPrice.toFixed(2)}** hasta **RD$${maxPrice.toFixed(2)}**).\n• **Consultas:** Prueba escribir *"auriculares"*, *"teclado"*, *"ofertas"*, *"envíos"*, *"pagos"* o *"garantía"*.\n• **Encargos:** También gestionamos pedidos especiales y personalizados.`,
+              text: `🤔 No identifiqué una palabra clave exacta, pero puedo ayudarte con:\n• **Productos:** Tenemos ${activeProducts.length} artículos activos (desde **RD$${minPrice.toFixed(2)}** hasta **RD$${maxPrice.toFixed(2)}**).\n• **Consultas:** Prueba escribir *"auriculares"*, *"cargadores"*, *"ofertas"*, *"envíos"*, *"pagos"* o *"garantía"*.\n• **Encargos:** También gestionamos pedidos especiales y personalizados.`,
               actions: [
                 { type: 'special', label: 'Pedido Especial' },
                 { type: 'whatsapp', label: 'Hablar con Asesor', prefill: `Hola BCO Tech, tengo una consulta: ${raw}` }
@@ -418,13 +418,13 @@
 
       const INITIAL_CATEGORIES = [
         { id: 'auriculares', name: 'Auriculares' },
-        { id: 'teclados', name: 'Teclados' },
-        { id: 'mouse', name: 'Mouse & Mousepads' },
-        { id: 'monitores', name: 'Monitores' },
+        { id: 'teclados', name: 'Teclado y Mouse' },
         { id: 'accesorios', name: 'Accesorios' },
         { id: 'gadgets', name: 'Gadgets' },
         { id: 'relojes', name: 'Relojes' },
-        { id: 'covers', name: 'Covers' }
+        { id: 'covers', name: 'Covers' },
+        { id: 'protectores', name: 'Protectores de pantalla' },
+        { id: 'cargadores', name: 'Cargadores' }
       ];
 
       const CATALOG_KEY = 'bco_catalog_v2';
@@ -439,7 +439,7 @@
         whatsapp: '18098435918',
         invoice_whatsapp: '',
         hero_title: 'TECNOLOGÍA DE SIGUIENTE NIVEL',
-        hero_subtitle: 'Equípate con periféricos pro, monitores de alta tasa de refresco y gadgets diseñados para rendir al máximo.',
+        hero_subtitle: 'Equípate con periféricos pro, accesorios y gadgets diseñados para rendir al máximo.',
         hero_image: 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?auto=format&fit=crop&w=1200&q=80',
         store_hours: 'Lunes a Sábado: 09:00 - 20:00 hs',
         custom_logo_url: '',
@@ -458,7 +458,7 @@ ALTER TABLE public.store_settings ADD COLUMN IF NOT EXISTS hero_images JSONB DEF
 ALTER TABLE public.store_settings ADD COLUMN IF NOT EXISTS custom_logo_url TEXT;
 ALTER TABLE public.store_settings ADD COLUMN IF NOT EXISTS logo_pill_in_dark BOOLEAN DEFAULT TRUE;
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS stock_discounted BOOLEAN NOT NULL DEFAULT FALSE;
-INSERT INTO public.categories (id, name) VALUES ('auriculares','Auriculares'), ('teclados','Teclados'), ('mouse','Mouse & Mousepads'), ('monitores','Monitores'), ('accesorios','Accesorios'), ('gadgets','Gadgets'), ('relojes','Relojes'), ('covers','Covers') ON CONFLICT (id) DO NOTHING;
+INSERT INTO public.categories (id, name) VALUES ('auriculares','Auriculares'), ('teclados','Teclado y Mouse'), ('accesorios','Accesorios'), ('gadgets','Gadgets'), ('relojes','Relojes'), ('covers','Covers'), ('protectores','Protectores de pantalla'), ('cargadores','Cargadores') ON CONFLICT (id) DO NOTHING;
 
 -- Lista de administradores (nadie puede leerla ni cambiarla desde la web)
 CREATE TABLE IF NOT EXISTS public.admins (user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE);
@@ -1532,7 +1532,7 @@ COMMIT;
                             {prod.on_sale && <span className="absolute top-3 left-3 bg-[#0033FF] text-white text-[10px] font-black px-2.5 py-1 rounded-full">OFERTA</span>}
                           </div>
                           <div className="p-4 space-y-1">
-                            <p className="text-[10px] font-bold uppercase text-[#8CFF00]">{prod.category}</p>
+                            <p className="text-[10px] font-bold uppercase text-[#8CFF00]">{categories.find(c => c.id === prod.category)?.name || prod.category}</p>
                             <h3 onClick={() => setSelectedProduct(prod)} className="font-bold text-sm cursor-pointer hover:text-[#8CFF00]">{prod.name}</h3>
                           </div>
                         </div>
