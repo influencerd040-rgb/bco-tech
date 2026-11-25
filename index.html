@@ -855,6 +855,7 @@ COMMIT;
 
         const [editingProduct, setEditingProduct] = useState(null);
         const [offerDrafts, setOfferDrafts] = useState({});
+        const [inventorySearch, setInventorySearch] = useState('');
         const [checkoutForm, setCheckoutForm] = useState({
           name: '',
           phone: '',
@@ -1400,6 +1401,36 @@ COMMIT;
           await saveProduct({ ...p, price: normalPrice, original_price: null, on_sale: false });
         };
 
+        // Cambia solo las existencias, sin tocar el resto del producto
+        const saveStock = async (p, value) => {
+          const stock = parseInt(value, 10);
+          if (!(stock >= 0) || stock === Number(p.stock || 0)) return;
+          const { data, error } = await supabaseClient.from('products').update({ stock }).eq('id', p.id).select('id');
+          if (error || !data?.length) return showToast(`No se guardó la cantidad${error ? `: ${error.message}` : ': vuelve a entrar a Admin'}`);
+          setProducts(prev => prev.map(x => x.id === p.id ? { ...x, stock } : x));
+          showToast(`${p.name}: ${stock} en inventario`);
+        };
+
+        const categoryName = (id) => categories.find(c => c.id === id)?.name || id || 'Sin categoría';
+        const hasCost = (p) => p.cost !== undefined && p.cost !== null && Number(p.cost) > 0;
+        const inventory = [...products].sort((a, b) => String(a.name).localeCompare(String(b.name), 'es'));
+        const inventoryShown = inventory.filter(p => normalizeNlpText(`${p.name} ${categoryName(p.category)}`).includes(normalizeNlpText(inventorySearch)));
+
+        const downloadInventory = () => {
+          // Las comillas y el apóstrofo evitan que Excel interprete un nombre como fórmula
+          const cell = (v) => `"${String(v ?? '').replace(/^[=+\-@]/, "'$&").replace(/"/g, '""')}"`;
+          const rows = [['Nombre', 'Categoría', 'Cantidad', 'Costo', 'Precio de venta'],
+            ...inventory.map(p => [p.name, categoryName(p.category), Number(p.stock || 0), hasCost(p) ? p.cost : '', p.price])];
+          const url = URL.createObjectURL(new Blob(['\ufeff' + rows.map(r => r.map(cell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }));
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'Inventario-BCO-Tech.csv';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 1500);
+        };
+
         const deleteProduct = async (id) => {
           if (!window.confirm('¿Eliminar este producto?')) return;
           if (!supabaseClient) return showToast('Sin conexión: no se eliminó');
@@ -1789,7 +1820,8 @@ COMMIT;
                       <div className="grid grid-cols-3 sm:flex sm:flex-wrap gap-2 w-full sm:w-auto">
                         {[
                           { id: 'products', label: 'Productos' },
-                          { id: 'offers', label: `Ofertas (${products.filter(p => p.on_sale).length})` },
+                          { id: 'inventory', label: 'Inventario' },
+                    { id: 'offers', label: `Ofertas (${products.filter(p => p.on_sale).length})` },
                     { id: 'orders', label: `Pedidos (${orders.length})` },
                           { id: 'stats', label: 'Estadísticas' },
                           { id: 'settings', label: 'Ajustes' },
@@ -1854,7 +1886,49 @@ COMMIT;
                       </div>
                     )}
 
-                    {/* Pestaña Ofertas */}
+                    {/* Pestaña Inventario */}
+                {adminTab === 'inventory' && (
+                  <div className="bg-white dark:bg-[#121824] p-4 sm:p-6 rounded-3xl border border-gray-800 space-y-4 text-xs">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h2 className="font-display font-bold uppercase">Inventario</h2>
+                      <button type="button" onClick={downloadInventory} disabled={!inventory.length} className="px-3 py-2 rounded-xl bg-[#0033FF] text-white font-bold disabled:opacity-40">Descargar para Excel</button>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {[
+                        ['Productos', inventory.length],
+                        ['Unidades', inventory.reduce((n, p) => n + Number(p.stock || 0), 0)],
+                        ['Invertido', `RD$${inventory.reduce((n, p) => n + (hasCost(p) ? Number(p.cost) * Number(p.stock || 0) : 0), 0).toFixed(2)}`],
+                        ['Valor de venta', `RD$${inventory.reduce((n, p) => n + Number(p.price || 0) * Number(p.stock || 0), 0).toFixed(2)}`]
+                      ].map(([label, value]) => (
+                        <div key={label} className="p-3 rounded-2xl bg-[#0A0D14] text-gray-100 border border-gray-800">
+                          <p className="text-gray-400">{label}</p>
+                          <p className="font-black text-sm break-words">{value}</p>
+                        </div>
+                      ))}
+                    </div>
+                    {inventory.some(p => !hasCost(p)) && <p className="text-amber-500">{inventory.filter(p => !hasCost(p)).length} producto(s) sin costo: no cuentan en «Invertido».</p>}
+                    <input type="search" value={inventorySearch} onChange={e => setInventorySearch(e.target.value)} placeholder="Buscar por nombre o categoría" aria-label="Buscar en inventario" className="w-full bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2" />
+                    <div className="divide-y divide-gray-800">
+                      {inventoryShown.map(p => (
+                        <div key={p.id} data-testid="fila-inventario" className="py-3 flex items-center gap-3">
+                          {p.images?.[0] && <img loading="lazy" src={p.images[0]} alt="" className="w-12 h-12 rounded-xl object-cover shrink-0" />}
+                          <div className="flex-1 min-w-0">
+                            <p className="font-bold text-sm break-words">{p.name}</p>
+                            <p className="text-gray-400">{categoryName(p.category)}{p.active ? '' : ' • Oculto'}</p>
+                            <p className="text-gray-400">Costo: {hasCost(p) ? `RD$${Number(p.cost).toFixed(2)}` : 'sin registrar'} • Venta: RD${Number(p.price || 0).toFixed(2)}</p>
+                            {Number(p.stock || 0) <= 0 ? <p className="font-bold text-red-400">Agotado</p> : Number(p.stock) <= 3 && <p className="font-bold text-amber-500">Quedan pocos</p>}
+                          </div>
+                          <label className="shrink-0 text-center text-gray-400">Cantidad
+                            <input key={p.stock} type="number" min="0" step="1" inputMode="numeric" defaultValue={Number(p.stock || 0)} aria-label={`Cantidad de ${p.name}`} onBlur={e => saveStock(p, e.target.value)} onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }} className="block mt-1 w-16 text-center bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-1 py-2" />
+                          </label>
+                        </div>
+                      ))}
+                      {!inventoryShown.length && <p className="py-4 text-gray-400">No hay productos que mostrar.</p>}
+                    </div>
+                  </div>
+                )}
+
+                {/* Pestaña Ofertas */}
                 {adminTab === 'offers' && (
                   <div className="bg-white dark:bg-[#121824] p-6 rounded-3xl border border-gray-800 space-y-4 text-xs">
                     <div>
