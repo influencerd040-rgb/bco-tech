@@ -1885,18 +1885,56 @@ COMMIT;
                         ) : (
                           <div className="space-y-3">
                             {orders.map((o, idx) => (
-                              <div key={o.id || o.order_number || idx} className="p-3 rounded-2xl bg-[#0A0D14] border border-gray-800 flex items-center justify-between gap-3">
-                                <div>
-                                  <p className="font-bold text-[#8CFF00]">{o.id || o.order_number || 'ORD'} • {o.customer_name}</p>
-                                  <p className="text-gray-400">{o.phone} • RD${Number(o.total || 0).toFixed(2)}</p>
-                                </div>
-                                <div className="flex items-center gap-2">
+                              <div key={o.id || o.order_number || idx} className="p-4 rounded-2xl bg-[#0A0D14] text-gray-100 border border-gray-800 space-y-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                              <p className="font-bold text-[#8CFF00] text-sm">{o.id}</p>
+                              <p className="text-gray-400">{o.created_at ? new Date(o.created_at).toLocaleString('es-DO', { dateStyle: 'medium', timeStyle: 'short' }) : 'Sin fecha'}</p>
+                            </div>
+                            <div className="flex items-center gap-2">
                             <select value={o.status || 'Nuevo'} onChange={e => updateOrderStatus(o.id, e.target.value)} className="px-2 py-1 rounded-xl bg-gray-800 text-gray-100 font-bold">
                               {ORDER_STATUSES.map(st => <option key={st} value={st}>{st}</option>)}
                             </select>
                             <button type="button" aria-label={`Borrar pedido ${o.id}`} onClick={() => deleteOrders([o], `¿Borrar el pedido ${o.id} de ${o.customer_name}?`)} className="p-2 rounded-xl bg-red-500/15 text-red-400"><TrashIcon className="h-4 w-4" /></button>
                           </div>
-                              </div>
+                          </div>
+                          <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 break-words">
+                            <div><dt className="text-gray-400">Cliente</dt><dd className="font-bold">{o.customer_name}</dd></div>
+                            <div>
+                              <dt className="text-gray-400">Teléfono</dt>
+                              <dd className="font-bold">
+                                {o.phone}{' '}
+                                {String(o.phone || '').replace(/\D/g, '').length >= 10 && (
+                                  <a href={`https://wa.me/${String(o.phone).replace(/\D/g, '').replace(/^(?=8[024]9\d{7}$)/, '1')}`} target="_blank" rel="noreferrer" className="ml-1 text-green-400 underline">WhatsApp</a>
+                                )}
+                              </dd>
+                            </div>
+                            <div><dt className="text-gray-400">Dirección</dt><dd className="font-bold">{o.address}</dd></div>
+                            <div><dt className="text-gray-400">Método de pago</dt><dd className="font-bold">{({ efectivo: 'Efectivo contra entrega', transferencia: 'Transferencia bancaria', tarjeta: 'Tarjeta / Link de pago' })[o.payment_method] || o.payment_method}</dd></div>
+                            {o.notes && <div className="sm:col-span-2"><dt className="text-gray-400">Notas</dt><dd className="font-bold whitespace-pre-wrap">{o.notes}</dd></div>}
+                          </dl>
+                          <div className="border-t border-gray-800 divide-y divide-gray-800">
+                            {(Array.isArray(o.items) ? o.items : []).map((item, n) => {
+                              const photo = products.find(p => p.id === item.product?.id)?.images?.[0];
+                              const qty = Number(item.quantity || 1);
+                              const unit = Number(item.product?.price || 0);
+                              return (
+                                <div key={n} className="py-2 flex items-center gap-3">
+                                  {photo && <img loading="lazy" src={photo} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0" />}
+                                  <div className="flex-1 min-w-0">
+                                    <p className="font-bold break-words">{item.product?.name || 'Producto'}</p>
+                                    <p className="text-gray-400">{qty} × RD${unit.toFixed(2)}</p>
+                                  </div>
+                                  <p className="font-bold">RD${(qty * unit).toFixed(2)}</p>
+                                </div>
+                              );
+                            })}
+                          </div>
+                          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-800 pt-3">
+                            <button type="button" onClick={() => generateInvoicePDF(o)} className="px-3 py-1.5 rounded-xl bg-[#0033FF] text-white font-bold">Descargar factura PDF</button>
+                            <p className="font-bold text-sm">Total: <span className="text-[#8CFF00]">RD${Number(o.total || 0).toFixed(2)}</span></p>
+                          </div>
+                        </div>
                             ))}
                           </div>
                         )}
