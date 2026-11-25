@@ -383,7 +383,8 @@
                 canvas.height = height;
                 const ctx = canvas.getContext('2d');
                 ctx.drawImage(img, 0, 0, width, height);
-                resolve(canvas.toDataURL('image/webp', quality));
+                const webp = canvas.toDataURL('image/webp', quality);
+                resolve(webp.startsWith('data:image/webp') ? webp : canvas.toDataURL('image/jpeg', quality));
               };
               img.onerror = () => reject(new Error('No se pudo procesar la imagen'));
               img.src = event.target.result;
@@ -479,6 +480,7 @@ CREATE TABLE IF NOT EXISTS public.products (id TEXT PRIMARY KEY, name TEXT NOT N
 CREATE TABLE IF NOT EXISTS public.orders (id TEXT PRIMARY KEY, customer_name TEXT NOT NULL, phone TEXT NOT NULL, address TEXT NOT NULL, payment_method TEXT NOT NULL, notes TEXT, items JSONB NOT NULL, total NUMERIC NOT NULL, status TEXT DEFAULT 'Nuevo', created_at TIMESTAMPTZ DEFAULT NOW());
 CREATE TABLE IF NOT EXISTS public.store_settings (id INT PRIMARY KEY DEFAULT 1, whatsapp TEXT, hero_title TEXT, hero_subtitle TEXT, hero_image TEXT, store_hours TEXT, updated_at TIMESTAMPTZ DEFAULT NOW());
 ALTER TABLE public.store_settings ADD COLUMN IF NOT EXISTS invoice_whatsapp TEXT;
+ALTER TABLE public.store_settings ADD COLUMN IF NOT EXISTS hero_images JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE public.store_settings ADD COLUMN IF NOT EXISTS custom_logo_url TEXT;
 ALTER TABLE public.store_settings ADD COLUMN IF NOT EXISTS logo_pill_in_dark BOOLEAN DEFAULT TRUE;
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS stock_discounted BOOLEAN NOT NULL DEFAULT FALSE;
@@ -710,6 +712,60 @@ COMMIT;
 
       // Usuario interno del panel: debe existir en Supabase (Authentication > Users)
       const ADMIN_EMAIL = 'admin@bcotech.local';
+
+      const MAX_HERO_IMAGES = 6;
+      const heroImagesOf = (cfg) =>
+        Array.isArray(cfg.hero_images) && cfg.hero_images.length ? cfg.hero_images : [cfg.hero_image || DEFAULT_SETTINGS.hero_image];
+
+      // Portada que se desliza hacia la izquierda; también se puede arrastrar con el dedo
+      const HeroCarousel = ({ images }) => {
+        const total = images.length;
+        const [index, setIndex] = useState(0);
+        const [animate, setAnimate] = useState(true);
+        const touchX = React.useRef(null);
+        const slides = total > 1 ? [...images, images[0]] : images;
+
+        useEffect(() => { setAnimate(false); setIndex(0); }, [total]);
+
+        useEffect(() => {
+          if (total < 2) return;
+          // Al llegar a la copia de la primera imagen, volver al inicio sin que se note
+          if (index >= total) {
+            const reset = setTimeout(() => { setAnimate(false); setIndex(0); }, 650);
+            return () => clearTimeout(reset);
+          }
+          const next = setTimeout(() => { setAnimate(true); setIndex(index + 1); }, 4000);
+          return () => clearTimeout(next);
+        }, [index, total]);
+
+        const go = (step) => { setAnimate(true); setIndex(i => ((i % total) + step + total) % total); };
+
+        return (
+          <div
+            className="relative overflow-hidden rounded-2xl border-2 border-[#8CFF00]/30"
+            onTouchStart={e => { touchX.current = e.touches[0].clientX; }}
+            onTouchEnd={e => {
+              if (touchX.current === null || total < 2) return;
+              const moved = e.changedTouches[0].clientX - touchX.current;
+              touchX.current = null;
+              if (Math.abs(moved) > 40) go(moved < 0 ? 1 : -1);
+            }}
+          >
+            <div data-testid="hero-track" className="flex" style={{ transform: `translateX(-${Math.min(index, slides.length - 1) * 100}%)`, transition: animate ? 'transform 0.6s ease' : 'none' }}>
+              {slides.map((src, i) => (
+                <img key={i} src={src} alt={`Portada ${(i % total) + 1}`} className="w-full shrink-0 h-64 sm:h-80 object-cover" />
+              ))}
+            </div>
+            {total > 1 && (
+              <div className="absolute bottom-3 inset-x-0 flex justify-center gap-2">
+                {images.map((_, i) => (
+                  <button key={i} type="button" aria-label={`Ver imagen ${i + 1}`} onClick={() => { setAnimate(true); setIndex(i); }} className={`h-2.5 rounded-full ${index % total === i ? 'w-6 bg-[#8CFF00]' : 'w-2.5 bg-white/70'}`} />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      };
 
       function App() {
         const initialConfig = useMemo(() => getInitialSupabaseConfig(), []);
@@ -1271,14 +1327,15 @@ COMMIT;
           if (!supabaseClient) return showToast('Sin conexión: no se guardó');
           const cleanSettings = {
             ...settingsDraft,
-            hero_image: settingsDraft.hero_image || settings.hero_image,
+            hero_images: Array.isArray(settingsDraft.hero_images) ? settingsDraft.hero_images : [],
+            hero_image: null,
             whatsapp: String(settingsDraft.whatsapp || '').replace(/\D/g, '') || '18098435918',
             invoice_whatsapp: String(settingsDraft.invoice_whatsapp || '').replace(/\D/g, '')
           };
           const { updated_at, ...row } = cleanSettings;
           const { error } = await supabaseClient.from('store_settings').upsert([{ ...row, id: 1 }]);
           if (error) return showToast(`No se guardó: ${error.message}`);
-          setSettings(cleanSettings);
+          setSettings({ ...cleanSettings, hero_image: DEFAULT_SETTINGS.hero_image });
           showToast('Ajustes guardados');
         };
 
@@ -1371,8 +1428,8 @@ COMMIT;
                       </button>
                     </div>
                   </div>
-                  <div className="w-full lg:w-1/2">
-                    <img src={settings.hero_image} alt="Portada BCO Tech" className="w-full h-64 sm:h-80 object-cover rounded-2xl border-2 border-[#8CFF00]/30" />
+                  <div className="w-full min-w-0 lg:w-1/2">
+                    <HeroCarousel images={heroImagesOf(settings)} />
                   </div>
                 </section>
 
@@ -1876,11 +1933,45 @@ COMMIT;
                             <input value={settingsDraft.hero_title} onChange={e => setSettingsDraft({ ...settingsDraft, hero_title: e.target.value })} className="w-full bg-[#0A0D14] border border-gray-700 rounded-xl px-3 py-2" />
                           </div>
                           <div>
-                            <label className="block font-bold uppercase mb-1">URL Imagen Portada</label>
-                            <input value={settingsDraft.hero_image} onChange={e => setSettingsDraft({ ...settingsDraft, hero_image: e.target.value })} className="w-full bg-[#0A0D14] border border-gray-700 rounded-xl px-3 py-2" />
-                          </div>
+                        <label className="block font-bold uppercase mb-1">Texto de portada</label>
+                        <input value={settingsDraft.hero_subtitle || ''} onChange={e => setSettingsDraft({ ...settingsDraft, hero_subtitle: e.target.value })} className="w-full bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2" />
+                      </div>
                         </div>
-                        <button type="submit" className="bg-[#8CFF00] text-black font-extrabold px-6 py-2.5 rounded-xl uppercase">Guardar</button>
+                        <div className="space-y-3 p-3 rounded-2xl border border-dashed border-gray-700">
+                      <div>
+                        <p className="font-bold uppercase">Imágenes de portada (máximo {MAX_HERO_IMAGES})</p>
+                        <p className="text-gray-400">Se deslizan hacia la izquierda en este orden. Pulsa Guardar al terminar.</p>
+                      </div>
+                      <div className="flex flex-wrap gap-3">
+                        {heroImagesOf(settingsDraft).map((src, i, list) => (
+                          <div key={i} className="space-y-1">
+                            <img src={src} alt={`Imagen de portada ${i + 1}`} className="w-32 h-20 object-cover rounded-xl border border-gray-700" />
+                            <div className="flex justify-between gap-1">
+                              <button type="button" disabled={i === 0} onClick={() => { const next = [...list]; [next[i - 1], next[i]] = [next[i], next[i - 1]]; setSettingsDraft(d => ({ ...d, hero_images: next })); }} className="px-2 py-1 rounded-lg bg-gray-800 text-gray-100 disabled:opacity-30" aria-label={`Mover imagen ${i + 1} antes`}>←</button>
+                              <button type="button" disabled={list.length === 1} onClick={() => setSettingsDraft(d => ({ ...d, hero_images: list.filter((_, n) => n !== i) }))} className="px-2 py-1 rounded-lg bg-red-500/15 text-red-400 font-bold disabled:opacity-30">Quitar</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <label className="block font-bold">Subir fotos
+                        <input type="file" accept="image/*" multiple className="block mt-1 w-full" onChange={async (e) => {
+                          const input = e.target;
+                          const files = Array.from(input.files || []);
+                          if (!files.length) return;
+                          const current = heroImagesOf(settingsDraft).filter(src => src !== DEFAULT_SETTINGS.hero_image);
+                          const room = MAX_HERO_IMAGES - current.length;
+                          try {
+                            const added = await Promise.all(files.slice(0, room).map(f => compressProductImage(f, 1200, 0.75)));
+                            setSettingsDraft(d => ({ ...d, hero_images: [...current, ...added] }));
+                            showToast(files.length > room ? `Solo caben ${MAX_HERO_IMAGES} imágenes` : 'Fotos agregadas: pulsa Guardar');
+                          } catch {
+                            showToast('No se pudo cargar una de las fotos');
+                          }
+                          input.value = '';
+                        }} />
+                      </label>
+                    </div>
+                    <button type="submit" className="bg-[#8CFF00] text-black font-extrabold px-6 py-2.5 rounded-xl uppercase">Guardar</button>
                       </form>
                     )}
 
