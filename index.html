@@ -397,6 +397,23 @@
         });
       };
 
+      // El logo se guarda en PNG para conservar el fondo transparente
+      const prepareLogo = (file, maxW = 500, maxH = 200) => new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+          const scale = Math.min(1, maxW / img.width, maxH / img.height);
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.round(img.width * scale));
+          canvas.height = Math.max(1, Math.round(img.height * scale));
+          canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+          URL.revokeObjectURL(url);
+          resolve(canvas.toDataURL('image/png'));
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Imagen no válida')); };
+        img.src = url;
+      });
+
       const INITIAL_CATEGORIES = [
         { id: 'auriculares', name: 'Auriculares' },
         { id: 'teclados', name: 'Teclados' },
@@ -1938,6 +1955,37 @@ COMMIT;
                       </div>
                         </div>
                         <div className="space-y-3 p-3 rounded-2xl border border-dashed border-gray-700">
+                      <div>
+                        <p className="font-bold uppercase">Logo</p>
+                        <p className="text-gray-400">Mejor un PNG con fondo transparente. Pulsa Guardar al terminar.</p>
+                      </div>
+                      <div className="inline-block p-3 rounded-xl bg-[#0A0D14] border border-gray-700">
+                        <BCOLogo className="h-12" theme="dark" customLogoUrl={settingsDraft.custom_logo_url} usePillInDark={settingsDraft.logo_pill_in_dark} />
+                      </div>
+                      <label className="block font-bold">Subir logo
+                        <input type="file" accept="image/*" className="block mt-1 w-full" onChange={async (e) => {
+                          const input = e.target;
+                          const file = input.files?.[0];
+                          if (!file) return;
+                          try {
+                            const logo = await prepareLogo(file);
+                            setSettingsDraft(d => ({ ...d, custom_logo_url: logo }));
+                            showToast('Logo cargado: pulsa Guardar');
+                          } catch {
+                            showToast('No se pudo cargar el logo');
+                          }
+                          input.value = '';
+                        }} />
+                      </label>
+                      <label className="flex items-center gap-2 font-bold">
+                        <input type="checkbox" checked={!!settingsDraft.logo_pill_in_dark} onChange={e => setSettingsDraft({ ...settingsDraft, logo_pill_in_dark: e.target.checked })} /> Fondo blanco detrás del logo en modo oscuro
+                      </label>
+                      {settingsDraft.custom_logo_url && (
+                        <button type="button" onClick={() => setSettingsDraft(d => ({ ...d, custom_logo_url: '' }))} className="px-3 py-1.5 rounded-xl bg-red-500/15 text-red-400 font-bold">Volver al logo original</button>
+                      )}
+                    </div>
+
+                    <div className="space-y-3 p-3 rounded-2xl border border-dashed border-gray-700">
                       <div>
                         <p className="font-bold uppercase">Imágenes de portada (máximo {MAX_HERO_IMAGES})</p>
                         <p className="text-gray-400">Se deslizan hacia la izquierda en este orden. Pulsa Guardar al terminar.</p>
