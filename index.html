@@ -4,6 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>BCO Tech - Tienda Oficial</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+    <meta name="theme-color" content="#0A0D14" />
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -786,6 +789,84 @@ COMMIT;
         }
         writePending(readPending().filter(o => o.id !== row.id));
         return null;
+      };
+
+      // Avisos de pedidos nuevos en el teléfono del administrador (Web Push)
+      const PUSH_PUBLIC_KEY = 'BLI8D5jH9oiLU0ni8Q6zXJbS445pty3po3unC0yeOk1SsGJeZEFJ0W4u_wntD9WVSlSZNcsAl16275W0cCyLzkA';
+
+      const OrderAlerts = ({ client, showToast }) => {
+        const supported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+        const isApple = /iPhone|iPad|iPod/.test(navigator.userAgent);
+        const [active, setActive] = React.useState(false);
+        const [busy, setBusy] = React.useState(false);
+
+        const save = async (sub) => {
+          const { error } = await client.from('push_subscriptions').upsert({ endpoint: sub.endpoint, subscription: sub.toJSON() });
+          if (error) throw new Error(error.message);
+        };
+
+        React.useEffect(() => {
+          if (!supported || !client || Notification.permission !== 'granted') return;
+          navigator.serviceWorker.getRegistration().then(async reg => {
+            const sub = await reg?.pushManager.getSubscription();
+            if (sub) { await save(sub); setActive(true); }
+          }).catch(() => {});
+        }, [client]);
+
+        const enable = async () => {
+          setBusy(true);
+          try {
+            if ((await Notification.requestPermission()) !== 'granted') {
+              return showToast('Permiso denegado: activa las notificaciones en los ajustes del teléfono');
+            }
+            await navigator.serviceWorker.register('sw.js');
+            const reg = await navigator.serviceWorker.ready;
+            const raw = atob(PUSH_PUBLIC_KEY.replace(/-/g, '+').replace(/_/g, '/'));
+            const sub = (await reg.pushManager.getSubscription()) ||
+              (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: Uint8Array.from(raw, c => c.charCodeAt(0)) }));
+            await save(sub);
+            setActive(true);
+            showToast('Notificaciones activadas en este teléfono');
+          } catch (err) {
+            showToast(`No se pudo activar: ${err.message}`);
+          } finally {
+            setBusy(false);
+          }
+        };
+
+        const disable = async () => {
+          const reg = await navigator.serviceWorker.getRegistration();
+          const sub = await reg?.pushManager.getSubscription();
+          if (sub) {
+            await client.from('push_subscriptions').delete().eq('endpoint', sub.endpoint);
+            await sub.unsubscribe();
+          }
+          setActive(false);
+          showToast('Notificaciones desactivadas en este teléfono');
+        };
+
+        const test = async () => {
+          const { data, error } = await client.functions.invoke('notificar-pedido', { body: { test: true } });
+          showToast(error || !data?.sent ? 'No se pudo enviar la prueba. Desactiva y vuelve a activar.' : 'Prueba enviada: debe llegar en unos segundos');
+        };
+
+        return (
+          <div data-testid="avisos" className="p-3 rounded-2xl bg-[#0A0D14] text-gray-100 border border-gray-800 space-y-2">
+            <p className="font-bold">🔔 Avisos de pedidos nuevos {active && <span className="text-[#8CFF00]">• Activados</span>}</p>
+            {!supported ? (
+              <p className="text-gray-400">{isApple
+                ? 'En iPhone: abre la tienda en Safari, toca Compartir, luego «Añadir a pantalla de inicio». Abre BCO Tech desde ese icono, entra a Admin → Pedidos y activa los avisos.'
+                : 'Este navegador no permite avisos. Abre la tienda en Chrome.'}</p>
+            ) : active ? (
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={test} className="px-3 py-2 rounded-xl bg-[#0033FF] text-white font-bold">Enviar prueba</button>
+                <button type="button" onClick={disable} className="px-3 py-2 rounded-xl bg-gray-800 text-gray-100 font-bold">Desactivar</button>
+              </div>
+            ) : (
+              <button type="button" onClick={enable} disabled={busy} className="px-3 py-2 rounded-xl bg-[#8CFF00] text-black font-bold disabled:opacity-40">Activar notificaciones</button>
+            )}
+          </div>
+        );
       };
 
       // Sube las fotos nuevas a Storage; en la base de datos solo queda el enlace
@@ -2008,7 +2089,8 @@ COMMIT;
                             </button>
                           )}
                         </div>
-                        {orders.some(o => ['Entregado', 'Cancelado'].includes(o.status)) && (
+                        {supabaseClient && <OrderAlerts client={supabaseClient} showToast={showToast} />}
+                    {orders.some(o => ['Entregado', 'Cancelado'].includes(o.status)) && (
                       <button type="button" onClick={() => { const done = orders.filter(o => ['Entregado', 'Cancelado'].includes(o.status)); deleteOrders(done, `¿Borrar ${done.length} pedido(s) entregados o cancelados?`); }} className="px-3 py-2 rounded-xl bg-red-500/15 text-red-400 font-bold flex items-center gap-1">
                         <TrashIcon className="h-4 w-4" /> Borrar entregados y cancelados
                       </button>
