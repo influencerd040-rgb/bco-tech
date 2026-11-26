@@ -856,6 +856,8 @@ COMMIT;
         const [editingProduct, setEditingProduct] = useState(null);
         const [offerDrafts, setOfferDrafts] = useState({});
         const [inventorySearch, setInventorySearch] = useState('');
+        const [priceEdit, setPriceEdit] = useState(null); // { id, prices: [], total: '' }
+        const [productSearch, setProductSearch] = useState('');
         const [checkoutForm, setCheckoutForm] = useState({
           name: '',
           phone: '',
@@ -1029,6 +1031,32 @@ COMMIT;
           showToast(data?.length ? `${data.length} pedido(s) borrado(s)` : 'No se borró ningún pedido: vuelve a entrar a Admin');
         };
 
+        // Precio especial: cambia solo este pedido, no el precio de la tienda
+        const editedTotal = (order, prices) => (order.items || []).reduce((sum, item, n) => sum + Number(item.quantity || 1) * Number(prices[n] || 0), 0);
+
+        const itemsSum = (order) => Math.round(editedTotal(order, (order.items || []).map(i => i.product?.price)) * 100) / 100;
+
+        const saveOrderPrices = async (order) => {
+          const prices = priceEdit.prices;
+          const manual = String(priceEdit.total ?? '').trim();
+          if (manual !== '' && !(Number(manual) >= 0)) return showToast('Revisa el total: no puede ser negativo');
+          if (manual !== '' && Number(manual) === 0 && !window.confirm('El total quedará en RD$0. ¿Guardar así?')) return;
+          if (prices.some(v => String(v).trim() === '' || !(Number(v) >= 0))) return showToast('Revisa los precios: no pueden quedar vacíos ni ser negativos');
+          if (prices.some(v => Number(v) === 0) && !window.confirm('Hay un artículo en RD$0. ¿Guardar así?')) return;
+          const items = (order.items || []).map((item, n) => {
+            const price = Math.round(Number(prices[n]) * 100) / 100;
+            const listPrice = Number(item.product?.list_price ?? item.product?.price ?? 0);
+            const { list_price, ...product } = item.product || {};
+            return { ...item, product: { ...product, price, ...(price !== listPrice ? { list_price: listPrice } : {}) } };
+          });
+          const total = Math.round((manual !== '' ? Number(manual) : editedTotal(order, items.map(i => i.product.price))) * 100) / 100;
+          const { data, error } = await supabaseClient.from('orders').update({ items, total }).eq('id', order.id).select('id');
+          if (error || !data?.length) return showToast(`No se guardó el precio${error ? `: ${error.message}` : ': vuelve a entrar a Admin'}`);
+          setPriceEdit(null);
+          await fetchOrdersFromClient(supabaseClient);
+          showToast(`Guardado. Nuevo total: RD$${total.toFixed(2)}`);
+        };
+
         const updateOrderStatus = async (id, status) => {
           const { error } = await supabaseClient.from('orders').update({ status }).eq('id', id);
           if (error) return showToast(`No se pudo cambiar el estado: ${error.message}`);
@@ -1167,6 +1195,16 @@ COMMIT;
             y -= 8;
             lines.push(`q 0.75 0.75 0.75 RG 40 ${y} m 572 ${y} l S Q`);
             y -= 24;
+            const subtotal = itemsSum(order);
+            const adjust = Math.round((Number(order.total) - subtotal) * 100) / 100;
+            if ((order.items || []).length && Math.abs(adjust) >= 0.01) {
+              addLine('Subtotal:', 10, false, '0.1 0.1 0.1', 360);
+              addLine(`RD$${subtotal.toFixed(2)}`, 10, false, '0.1 0.1 0.1', 475);
+              y -= 16;
+              addLine(adjust < 0 ? 'Descuento:' : 'Ajuste:', 10, false, '0.1 0.1 0.1', 360);
+              addLine(`${adjust < 0 ? '-' : '+'}RD$${Math.abs(adjust).toFixed(2)}`, 10, false, '0.1 0.1 0.1', 475);
+              y -= 20;
+            }
             addLine('TOTAL A PAGAR:', 13, true, '0.0 0.2 1.0', 360);
             addLine(`RD$${Number(order.total || 0).toFixed(2)}`, 14, true, '0.05 0.05 0.05', 475);
 
@@ -1415,6 +1453,7 @@ COMMIT;
         const hasCost = (p) => p.cost !== undefined && p.cost !== null && Number(p.cost) > 0;
         const inventory = [...products].sort((a, b) => String(a.name).localeCompare(String(b.name), 'es'));
         const inventoryShown = inventory.filter(p => normalizeNlpText(`${p.name} ${categoryName(p.category)}`).includes(normalizeNlpText(inventorySearch)));
+        const productsShown = products.filter(p => normalizeNlpText(`${p.name} ${categoryName(p.category)}`).includes(normalizeNlpText(productSearch)));
 
         const downloadInventory = () => {
           // Las comillas y el apóstrofo evitan que Excel interprete un nombre como fórmula
@@ -1851,7 +1890,8 @@ COMMIT;
                             <h2 className="font-display font-bold uppercase">Productos ({products.length})</h2>
                             {productsSyncMessage && <p className="text-[11px] text-gray-400 mt-0.5">{productsSyncMessage}</p>}
                           </div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                            <input type="search" value={productSearch} onChange={e => setProductSearch(e.target.value)} placeholder="Buscar producto" aria-label="Buscar en productos" className="flex-1 basis-full sm:basis-56 min-w-0 bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2 text-base sm:text-xs" />
                             {supabaseClient && (
                               <button onClick={() => fetchProductsFromClient(supabaseClient)} className="bg-gray-800 text-gray-200 px-3 py-2 rounded-xl text-xs font-bold uppercase">
                                 Sincronizar
@@ -1863,8 +1903,8 @@ COMMIT;
                           </div>
                         </div>
                         <div className="divide-y divide-gray-800">
-                          {products.map(p => (
-                            <div key={p.id} className="py-3 flex items-center justify-between gap-3 text-xs">
+                          {productsShown.map(p => (
+                            <div key={p.id} data-testid="fila-producto" className="py-3 flex items-center justify-between gap-3 text-xs">
                               <div className="flex items-center gap-3">
                                 {p.images?.[0] && (
                                   <img src={p.images[0]} alt={p.name} className="w-10 h-10 rounded-xl object-cover border border-gray-700" />
@@ -1882,6 +1922,7 @@ COMMIT;
                               </div>
                             </div>
                           ))}
+                          {!productsShown.length && <p className="py-4 text-xs text-gray-400">No hay productos que mostrar.</p>}
                         </div>
                       </div>
                     )}
@@ -1893,6 +1934,7 @@ COMMIT;
                       <h2 className="font-display font-bold uppercase">Inventario</h2>
                       <button type="button" onClick={downloadInventory} disabled={!inventory.length} className="px-3 py-2 rounded-xl bg-[#0033FF] text-white font-bold disabled:opacity-40">Descargar para Excel</button>
                     </div>
+                    <input type="search" value={inventorySearch} onChange={e => setInventorySearch(e.target.value)} placeholder="Buscar por nombre o categoría" aria-label="Buscar en inventario" className="w-full bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2" />
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                       {[
                         ['Productos', inventory.length],
@@ -1907,7 +1949,6 @@ COMMIT;
                       ))}
                     </div>
                     {inventory.some(p => !hasCost(p)) && <p className="text-amber-500">{inventory.filter(p => !hasCost(p)).length} producto(s) sin costo: no cuentan en «Inversión».</p>}
-                    <input type="search" value={inventorySearch} onChange={e => setInventorySearch(e.target.value)} placeholder="Buscar por nombre o categoría" aria-label="Buscar en inventario" className="w-full bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2" />
                     <div className="divide-y divide-gray-800">
                       {inventoryShown.map(p => (
                         <div key={p.id} data-testid="fila-inventario" className="py-3 flex items-center gap-3">
@@ -2022,13 +2063,34 @@ COMMIT;
                                   {photo && <img loading="lazy" src={photo} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0" />}
                                   <div className="flex-1 min-w-0">
                                     <p className="font-bold break-words">{item.product?.name || 'Producto'}</p>
-                                    <p className="text-gray-400">{qty} × RD${unit.toFixed(2)}</p>
+                                    <p className="text-gray-400">
+                                      {qty} × RD${unit.toFixed(2)}
+                                      {item.product?.list_price !== undefined && <span className="ml-2 text-amber-400">Precio especial <s>RD${Number(item.product.list_price).toFixed(2)}</s></span>}
+                                    </p>
+                                    {priceEdit?.id === o.id && (
+                                      <label className="block mt-1 text-gray-400">Precio por unidad (RD$)
+                                        <input type="number" min="0" step="0.01" inputMode="decimal" aria-label={`Precio especial de ${item.product?.name}`} value={priceEdit.prices[n] ?? ''} onChange={e => setPriceEdit(prev => ({ ...prev, prices: prev.prices.map((v, k) => k === n ? e.target.value : v) }))} className="block mt-1 w-32 bg-[#121824] text-gray-100 border border-[#8CFF00]/60 rounded-xl px-3 py-2" />
+                                      </label>
+                                    )}
                                   </div>
                                   <p className="font-bold">RD${(qty * unit).toFixed(2)}</p>
                                 </div>
                               );
                             })}
                           </div>
+                          {priceEdit?.id === o.id ? (
+                            <div className="flex flex-wrap items-center gap-2">
+                              <label className="w-full font-bold">Total para cliente mayorista (RD$)
+                                <input type="number" min="0" step="0.01" inputMode="decimal" aria-label="Total del pedido" value={priceEdit.total} placeholder={editedTotal(o, priceEdit.prices).toFixed(2)} onChange={e => { const value = e.target.value; setPriceEdit(prev => ({ ...prev, total: value })); }} className="block mt-1 w-full sm:w-56 bg-[#121824] text-gray-100 border border-[#8CFF00]/60 rounded-xl px-3 py-2" />
+                                <span className="block mt-1 font-normal text-gray-400">Déjalo vacío para sumar los precios de arriba.</span>
+                              </label>
+                              <p className="font-bold mr-auto">Nuevo total: RD${Number(String(priceEdit.total).trim() === '' ? editedTotal(o, priceEdit.prices) : priceEdit.total).toFixed(2)}</p>
+                              <button type="button" onClick={() => setPriceEdit(null)} className="px-3 py-2 rounded-xl bg-gray-800 text-gray-100 font-bold">Cancelar</button>
+                              <button type="button" onClick={() => saveOrderPrices(o)} className="px-3 py-2 rounded-xl bg-[#8CFF00] text-black font-bold">Guardar cambios</button>
+                            </div>
+                          ) : Array.isArray(o.items) && o.items.length > 0 && (
+                            <button type="button" onClick={() => setPriceEdit({ id: o.id, prices: o.items.map(item => String(item.product?.price ?? 0)), total: Math.abs(Number(o.total) - itemsSum(o)) >= 0.01 ? String(o.total) : '' })} className="px-3 py-2 rounded-xl border border-[#8CFF00]/60 text-[#8CFF00] font-bold">Cambiar total / precios</button>
+                          )}
                           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-800 pt-3">
                             <button type="button" onClick={() => generateInvoicePDF(o)} className="px-3 py-1.5 rounded-xl bg-[#0033FF] text-white font-bold">Descargar factura PDF</button>
                             <p className="font-bold text-sm">Total: <span className="text-[#8CFF00]">RD${Number(o.total || 0).toFixed(2)}</span></p>
