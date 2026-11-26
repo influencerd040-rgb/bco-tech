@@ -516,18 +516,23 @@ CREATE POLICY "crear pedidos" ON public.orders FOR INSERT TO anon, authenticated
 
 -- Descontar inventario al confirmar y devolverlo al cancelar
 CREATE OR REPLACE FUNCTION public.ajustar_stock() RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
-DECLARE item JSONB; signo INT := 0;
+DECLARE item JSONB; pos BIGINT; disponible INT; tomado INT;
 BEGIN
-  IF NEW.status IN ('Confirmado','Entregado') AND NOT OLD.stock_discounted THEN signo := -1; NEW.stock_discounted := TRUE;
-  ELSIF NEW.status NOT IN ('Confirmado','Entregado') AND OLD.stock_discounted THEN signo := 1; NEW.stock_discounted := FALSE;
-  END IF;
-  IF signo <> 0 THEN
+  IF NEW.status IN ('Confirmado','Entregado') AND NOT OLD.stock_discounted THEN
+    NEW.stock_discounted := TRUE;
     IF EXISTS (SELECT 1 FROM jsonb_array_elements(NEW.items) e WHERE (e->>'quantity')::INT <= 0) THEN RAISE EXCEPTION 'Cantidad no valida en el pedido'; END IF;
-    FOR item IN SELECT * FROM jsonb_array_elements(NEW.items) LOOP
-      IF signo = -1 AND EXISTS (SELECT 1 FROM public.products WHERE id = item->'product'->>'id' AND stock < (item->>'quantity')::INT) THEN
-        RAISE EXCEPTION 'No hay existencias suficientes de %', item->'product'->>'name';
-      END IF;
-      UPDATE public.products SET stock = stock + signo * (item->>'quantity')::INT WHERE id = item->'product'->>'id';
+    -- Se puede vender sin existencias: se descuenta lo que haya, nunca por debajo de 0
+    FOR item, pos IN SELECT value, ordinality FROM jsonb_array_elements(NEW.items) WITH ORDINALITY LOOP
+      SELECT stock INTO disponible FROM public.products WHERE id = item->'product'->>'id' FOR UPDATE;
+      tomado := GREATEST(0, LEAST(COALESCE(disponible, 0), (item->>'quantity')::INT));
+      UPDATE public.products SET stock = stock - tomado WHERE id = item->'product'->>'id';
+      NEW.items := jsonb_set(NEW.items, ARRAY[(pos - 1)::TEXT, 'stock_taken'], to_jsonb(tomado));
+    END LOOP;
+  ELSIF NEW.status NOT IN ('Confirmado','Entregado') AND OLD.stock_discounted THEN
+    NEW.stock_discounted := FALSE;
+    -- Al cancelar se devuelve solo lo que se desconto
+    FOR item IN SELECT value FROM jsonb_array_elements(NEW.items) LOOP
+      UPDATE public.products SET stock = stock + COALESCE((item->>'stock_taken')::INT, (item->>'quantity')::INT) WHERE id = item->'product'->>'id';
     END LOOP;
   END IF;
   RETURN NEW;
@@ -1074,14 +1079,7 @@ COMMIT;
           });
         }, [products, selectedCategory, searchQuery, onlyOnSale]);
 
-        const stockOf = (product) => product.stock === null || product.stock === undefined ? Infinity : Number(product.stock);
-
         const addToCart = (product, qty = 1) => {
-          const inCart = cart.find(i => i.product.id === product.id)?.quantity || 0;
-          if (inCart + qty > stockOf(product)) {
-            showToast(stockOf(product) > 0 ? `Solo hay ${stockOf(product)} disponible(s)` : 'Producto agotado');
-            return;
-          }
           setCart(prev => {
             const exists = prev.find(i => i.product.id === product.id);
             if (exists) return prev.map(i => i.product.id === product.id ? { ...i, quantity: i.quantity + qty } : i);
@@ -1092,12 +1090,7 @@ COMMIT;
         };
 
         const updateCartQty = (id, delta) => {
-          const live = products.find(p => p.id === id);
-          setCart(prev => prev.map(i => {
-            if (i.product.id !== id) return i;
-            const next = i.quantity + delta;
-            return delta > 0 && next > stockOf(live || i.product) ? i : { ...i, quantity: next };
-          }).filter(i => i.quantity > 0));
+          setCart(prev => prev.map(i => i.product.id === id ? { ...i, quantity: i.quantity + delta } : i).filter(i => i.quantity > 0));
         };
 
         // Mantiene los precios del carrito iguales a los del catálogo
@@ -1634,7 +1627,7 @@ COMMIT;
                             {prod.on_sale && prod.original_price && <span className="text-xs text-gray-400 line-through">RD${Number(prod.original_price).toFixed(2)}</span>}
                           </div>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                            <button onClick={() => addToCart(prod, 1)} disabled={stockOf(prod) <= 0} className="bg-[#8CFF00] text-black font-bold py-2.5 sm:py-2 rounded-xl text-xs hover:bg-[#7ce000] disabled:opacity-40">{stockOf(prod) <= 0 ? 'Agotado' : 'Agregar'}</button>
+                            <button onClick={() => addToCart(prod, 1)} className="bg-[#8CFF00] text-black font-bold py-2.5 sm:py-2 rounded-xl text-xs hover:bg-[#7ce000] disabled:opacity-40">Agregar</button>
                             <a href={`https://wa.me/${settings.whatsapp}?text=${encodeURIComponent(`Hola BCO Tech, quiero consultar por: ${prod.name} (RD$${Number(prod.price).toFixed(2)})`)}`} target="_blank" rel="noreferrer" className="hidden sm:block border border-green-500/40 text-green-400 font-bold py-2 rounded-xl text-xs text-center hover:bg-green-500 hover:text-white">
                               WhatsApp
                             </a>
@@ -2461,7 +2454,7 @@ COMMIT;
                   <p className="text-gray-600 dark:text-gray-300 text-sm whitespace-pre-wrap">{selectedProduct.description}</p>
                   <div className="sticky bottom-0 grid grid-cols-2 gap-2 pt-2 bg-white dark:bg-[#121824]">
                   <a href={`https://wa.me/${settings.whatsapp}?text=${encodeURIComponent(`Hola BCO Tech, quiero consultar por: ${selectedProduct.name} (RD$${Number(selectedProduct.price).toFixed(2)})`)}`} target="_blank" rel="noreferrer" className="py-3.5 rounded-xl border border-green-500 text-green-500 font-extrabold uppercase text-center">WhatsApp</a>
-                  <button disabled={stockOf(selectedProduct) <= 0} onClick={() => { addToCart(selectedProduct, 1); setSelectedProduct(null); }} className="py-3.5 rounded-xl bg-[#8CFF00] text-black font-extrabold uppercase disabled:opacity-40">{stockOf(selectedProduct) <= 0 ? 'Agotado' : 'Agregar'}</button>
+                  <button onClick={() => { addToCart(selectedProduct, 1); setSelectedProduct(null); }} className="py-3.5 rounded-xl bg-[#8CFF00] text-black font-extrabold uppercase disabled:opacity-40">Agregar</button>
                 </div>
                 </div>
               </div>
