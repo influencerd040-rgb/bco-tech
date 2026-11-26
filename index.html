@@ -1897,7 +1897,7 @@ COMMIT;
                       {[
                         ['Productos', inventory.length],
                         ['Unidades', inventory.reduce((n, p) => n + Number(p.stock || 0), 0)],
-                        ['Invertido', `RD$${inventory.reduce((n, p) => n + (hasCost(p) ? Number(p.cost) * Number(p.stock || 0) : 0), 0).toFixed(2)}`],
+                        ['Inversión', `RD$${inventory.reduce((n, p) => n + (hasCost(p) ? Number(p.cost) * Number(p.stock || 0) : 0), 0).toFixed(2)}`],
                         ['Valor de venta', `RD$${inventory.reduce((n, p) => n + Number(p.price || 0) * Number(p.stock || 0), 0).toFixed(2)}`]
                       ].map(([label, value]) => (
                         <div key={label} className="p-3 rounded-2xl bg-[#0A0D14] text-gray-100 border border-gray-800">
@@ -1906,7 +1906,7 @@ COMMIT;
                         </div>
                       ))}
                     </div>
-                    {inventory.some(p => !hasCost(p)) && <p className="text-amber-500">{inventory.filter(p => !hasCost(p)).length} producto(s) sin costo: no cuentan en «Invertido».</p>}
+                    {inventory.some(p => !hasCost(p)) && <p className="text-amber-500">{inventory.filter(p => !hasCost(p)).length} producto(s) sin costo: no cuentan en «Inversión».</p>}
                     <input type="search" value={inventorySearch} onChange={e => setInventorySearch(e.target.value)} placeholder="Buscar por nombre o categoría" aria-label="Buscar en inventario" className="w-full bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2" />
                     <div className="divide-y divide-gray-800">
                       {inventoryShown.map(p => (
@@ -1916,6 +1916,9 @@ COMMIT;
                             <p className="font-bold text-sm break-words">{p.name}</p>
                             <p className="text-gray-400">{categoryName(p.category)}{p.active ? '' : ' • Oculto'}</p>
                             <p className="text-gray-400">Costo: {hasCost(p) ? `RD$${Number(p.cost).toFixed(2)}` : 'sin registrar'} • Venta: RD${Number(p.price || 0).toFixed(2)}</p>
+                            <p className="font-bold text-[#0033FF] dark:text-[#8CFF00] break-words">
+                              {hasCost(p) ? `Inversión: ${Number(p.stock || 0)} × RD$${Number(p.cost).toFixed(2)} = RD$${(Number(p.stock || 0) * Number(p.cost)).toFixed(2)}` : 'Inversión: falta el costo'}
+                            </p>
                             {Number(p.stock || 0) <= 0 ? <p className="font-bold text-red-400">Agotado</p> : Number(p.stock) <= 3 && <p className="font-bold text-amber-500">Quedan pocos</p>}
                           </div>
                           <label className="shrink-0 text-center text-gray-400">Cantidad
