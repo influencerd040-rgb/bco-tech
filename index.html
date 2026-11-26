@@ -477,6 +477,7 @@ ALTER TABLE public.store_settings ADD COLUMN IF NOT EXISTS hero_images JSONB DEF
 ALTER TABLE public.store_settings ADD COLUMN IF NOT EXISTS custom_logo_url TEXT;
 ALTER TABLE public.store_settings ADD COLUMN IF NOT EXISTS logo_pill_in_dark BOOLEAN DEFAULT TRUE;
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS stock_discounted BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS color TEXT, ADD COLUMN IF NOT EXISTS phone_model TEXT;
 INSERT INTO public.categories (id, name) VALUES ('auriculares','Auriculares'), ('teclados','Teclado y Mouse'), ('accesorios','Accesorios'), ('gadgets','Gadgets'), ('relojes','Relojes'), ('covers','Covers'), ('protectores','Protectores de pantalla'), ('cargadores','Cargadores') ON CONFLICT (id) DO NOTHING;
 
 -- Lista de administradores (nadie puede leerla ni cambiarla desde la web)
@@ -869,6 +870,25 @@ COMMIT;
         );
       };
 
+      // Covers: modelo de iPhone y color
+      const IPHONE_MODELS = ['11', '12', '13', '14', '15', '16', '17'].flatMap(n => {
+        const extra = n === '11' ? ['Pro', 'Pro Max'] : n === '12' || n === '13' ? ['mini', 'Pro', 'Pro Max'] : n === '17' ? ['Pro', 'Pro Max'] : ['Plus', 'Pro', 'Pro Max'];
+        return [`iPhone ${n}`, ...extra.map(x => `iPhone ${n} ${x}`)];
+      }).concat('iPhone Air', 'iPhone 16e');
+      const COVER_COLORS = { Negro: '#111111', Blanco: '#f5f5f5', Transparente: 'linear-gradient(135deg,#fff 40%,#9ca3af)', Gris: '#8b8f96', Azul: '#2563eb', Celeste: '#7dd3fc', Verde: '#16a34a', Rojo: '#dc2626', Rosado: '#f9a8d4', Morado: '#8b5cf6', Lila: '#c4b5fd', Amarillo: '#facc15', Naranja: '#f97316', 'Marrón': '#92603a', Beige: '#e7d3b0', Dorado: '#d4af37' };
+      // El modelo se toma del campo; si está vacío, del nombre del producto
+      const phoneModelOf = (p) => {
+        if (p.phone_model) return p.phone_model;
+        const m = String(p.name || '').match(/iphone\s*(1[1-7])(e)?(?:\s*(pro\s*max|pro|plus|mini))?/i);
+        if (!m) return '';
+        const kind = (m[3] || '').toLowerCase().replace(/\s+/g, ' ');
+        const extra = { 'pro max': ' Pro Max', promax: ' Pro Max', pro: ' Pro', plus: ' Plus', mini: ' mini' }[kind] || '';
+        return `iPhone ${m[1]}${m[2] ? 'e' : ''}${extra}`;
+      };
+      const colorOf = (p) => (p?.category === 'covers' && p.color) || '';
+      const displayName = (p) => colorOf(p) ? `${String(p.name).trim()} - Color ${colorOf(p)}` : p.name;
+      const modelRank = (m) => { const i = IPHONE_MODELS.indexOf(m); return i < 0 ? 999 : i; };
+
       // Sube las fotos nuevas a Storage; en la base de datos solo queda el enlace
       const uploadPhotos = async (client, folder, images) => {
         const out = [];
@@ -914,6 +934,8 @@ COMMIT;
 
         const [searchQuery, setSearchQuery] = useState('');
         const [selectedCategory, setSelectedCategory] = useState('all');
+        const [coverModel, setCoverModel] = useState('');
+        const [coverColor, setCoverColor] = useState('');
         const [onlyOnSale, setOnlyOnSale] = useState(false);
         const [isCartOpen, setIsCartOpen] = useState(false);
         const [isMoreOpen, setIsMoreOpen] = useState(false);
@@ -1154,11 +1176,16 @@ COMMIT;
           return products.filter(p => {
             if (!p.active) return false;
             const matchCat = selectedCategory === 'all' || p.category === selectedCategory;
-            const matchSearch = normalizeNlpText(`${p.name} ${p.description || ''}`).includes(normalizeNlpText(searchQuery));
+            if (selectedCategory === 'covers' && ((coverModel && phoneModelOf(p) !== coverModel) || (coverColor && p.color !== coverColor))) return false;
+            const matchSearch = normalizeNlpText(`${p.name} ${p.description || ''} ${colorOf(p)}`).includes(normalizeNlpText(searchQuery));
             const matchSale = onlyOnSale ? p.on_sale : true;
             return matchCat && matchSearch && matchSale;
           });
-        }, [products, selectedCategory, searchQuery, onlyOnSale]);
+        }, [products, selectedCategory, searchQuery, onlyOnSale, coverModel, coverColor]);
+
+        const covers = products.filter(p => p.active && p.category === 'covers');
+        const coverModels = [...new Set(covers.map(phoneModelOf).filter(Boolean))].sort((a, b) => modelRank(a) - modelRank(b));
+        const coverColors = [...new Set(covers.filter(p => !coverModel || phoneModelOf(p) === coverModel).map(p => p.color).filter(Boolean))].sort();
 
         const addToCart = (product, qty = 1) => {
           setCart(prev => {
@@ -1189,7 +1216,7 @@ COMMIT;
         const monthlyStats = useMemo(() => buildMonthlySalesStats(orders, products), [orders, products]);
 
         const persistOrderRecord = async (record) => {
-          const items = record.items.map(({ product, quantity }) => ({ product: { id: product.id, name: product.name, price: product.price }, quantity }));
+          const items = record.items.map(({ product, quantity }) => ({ product: { id: product.id, name: displayName(product), price: product.price }, quantity }));
           const row = { ...record, items };
           writePending([...readPending(), row]);
           if (!supabaseClient) return false;
@@ -1261,7 +1288,9 @@ COMMIT;
               const qty = Number(item.quantity || 1);
               const unit = Number(item.product?.price || 0);
               addLine(`${qty}x`, 10, true, '0.1 0.1 0.1', 50);
-              addLine(`${item.product?.name || 'Producto'} (RD$${unit.toFixed(2)} c/u)`.slice(0, 56), 10, false, '0.1 0.1 0.1', 105);
+              const fullName = item.product?.name || 'Producto';
+              const colorTag = (fullName.match(/ - Color [^-]+$/) || [''])[0]; // el color nunca se recorta
+              addLine(`${fullName.slice(0, fullName.length - colorTag.length)} (RD$${unit.toFixed(2)} c/u)`.slice(0, 56 - colorTag.length) + colorTag, 10, false, '0.1 0.1 0.1', 105);
               addLine(`RD$${(qty * unit).toFixed(2)}`, 10, true, '0.1 0.1 0.1', 495);
               y -= 18;
             });
@@ -1340,7 +1369,7 @@ COMMIT;
 
           let msg = `🛒 *NUEVO PEDIDO - BCO TECH* (#${orderId})\n👤 *Cliente:* ${checkoutForm.name}\n📞 *Teléfono:* ${checkoutForm.phone}\n📍 *Dirección:* ${checkoutForm.address}\n💳 *Pago:* ${checkoutForm.paymentMethod.toUpperCase()}\n\n📦 *PRODUCTOS:*\n`;
           cart.forEach(item => {
-            msg += `• ${item.quantity}x ${item.product.name} - RD$${(item.product.price * item.quantity).toFixed(2)}\n`;
+            msg += `• ${item.quantity}x ${displayName(item.product)} - RD$${(item.product.price * item.quantity).toFixed(2)}\n`;
           });
           msg += `\n💰 *TOTAL: RD$${cartTotal.toFixed(2)}*`;
 
@@ -1478,6 +1507,13 @@ COMMIT;
           askMiniAi(aiInput);
         };
 
+        const saveColor = async (p, color) => {
+          const { data, error } = await supabaseClient.from('products').update({ color: color || null }).eq('id', p.id).select('id');
+          if (error || !data?.length) return showToast(`No se guardó el color${error ? `: ${error.message}` : ': vuelve a entrar a Admin'}`);
+          setProducts(prev => prev.map(x => x.id === p.id ? { ...x, color: color || null } : x));
+          showToast(color ? `Color guardado: ${color}` : 'Color quitado');
+        };
+
         const saveProduct = async (prod) => {
           if (!String(prod.name || '').trim() || !(Number(prod.price) > 0)) return showToast('Escribe un nombre y un precio mayor que 0');
           if (!supabaseClient) return showToast('Sin conexión: no se guardó');
@@ -1527,7 +1563,7 @@ COMMIT;
         const hasCost = (p) => p.cost !== undefined && p.cost !== null && Number(p.cost) > 0;
         const inventory = [...products].sort((a, b) => String(a.name).localeCompare(String(b.name), 'es'));
         const inventoryShown = inventory.filter(p => normalizeNlpText(`${p.name} ${categoryName(p.category)}`).includes(normalizeNlpText(inventorySearch)));
-        const productsShown = products.filter(p => normalizeNlpText(`${p.name} ${categoryName(p.category)}`).includes(normalizeNlpText(productSearch)));
+        const productsShown = products.filter(p => normalizeNlpText(`${p.name} ${categoryName(p.category)} ${colorOf(p)}`).includes(normalizeNlpText(productSearch)));
 
         const downloadInventory = () => {
           // Las comillas y el apóstrofo evitan que Excel interprete un nombre como fórmula
@@ -1683,6 +1719,36 @@ COMMIT;
                     ))}
                   </div>
 
+                  {selectedCategory === 'covers' && coverModels.length > 0 && (
+                    <div data-testid="submenu-covers" className="space-y-3 p-3 rounded-2xl border border-gray-200 dark:border-gray-800">
+                      <div>
+                        <p className="text-[10px] font-bold uppercase text-gray-400 mb-1.5">Modelo de iPhone</p>
+                        <div className="flex flex-wrap gap-2">
+                          {['', ...coverModels].map(m => (
+                            <button type="button" key={m || 'todos'} aria-pressed={coverModel === m} onClick={() => { setCoverModel(m); setCoverColor(''); }} className={`px-3 py-2 rounded-xl text-xs font-bold border ${coverModel === m ? 'bg-[#8CFF00] text-black border-[#8CFF00]' : 'border-gray-300 dark:border-gray-700'}`}>
+                              {m ? m.replace('iPhone ', '') : 'Todos'}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      {coverColors.length > 0 && (
+                        <div>
+                          <p className="text-[10px] font-bold uppercase text-gray-400 mb-1.5">Color</p>
+                          <div className="flex flex-wrap gap-2">
+                            {['', ...coverColors].map(c => (
+                              <button type="button" key={c || 'todos'} aria-pressed={coverColor === c} onClick={() => setCoverColor(c)} className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border ${coverColor === c ? 'border-[#8CFF00] ring-2 ring-[#8CFF00]' : 'border-gray-300 dark:border-gray-700'}`}>
+                                {c && <span className="w-3.5 h-3.5 rounded-full border border-gray-500" style={{ background: COVER_COLORS[c] || '#777' }} />}
+                                {c || 'Todos'}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {products.length > 0 && filteredProducts.length === 0 && selectedCategory === 'covers' && <p className="text-center text-sm text-gray-400 py-6">No hay covers con esa combinación.</p>}
+
                   {products.length === 0 && (
                 <div className="text-center text-sm text-gray-400 py-8 space-y-3">
                   <p>{catalogStatus === 'loading' ? 'Cargando productos...' : catalogStatus === 'error' ? 'No se pudieron cargar los productos. Revisa tu internet.' : 'Todavía no hay productos.'}</p>
@@ -1700,6 +1766,7 @@ COMMIT;
                           <div className="p-2.5 sm:p-4 space-y-1">
                             <p className="text-[10px] font-bold uppercase text-[#8CFF00]">{categories.find(c => c.id === prod.category)?.name || prod.category}</p>
                             <h3 onClick={() => setSelectedProduct(prod)} className="font-bold text-xs sm:text-sm line-clamp-2 break-words cursor-pointer hover:text-[#8CFF00]">{prod.name}</h3>
+                            {colorOf(prod) && <p className="text-[11px] font-bold text-gray-400">Color: {colorOf(prod)}</p>}
                           </div>
                         </div>
                         <div className="p-2.5 sm:p-4 pt-0 sm:pt-0 space-y-2 sm:space-y-3">
@@ -1978,8 +2045,8 @@ COMMIT;
                         </div>
                         <div className="divide-y divide-gray-800">
                           {productsShown.map(p => (
-                            <div key={p.id} data-testid="fila-producto" className="py-3 flex items-center justify-between gap-3 text-xs">
-                              <div className="flex items-center gap-3">
+                            <div key={p.id} data-testid="fila-producto" className="py-3 flex flex-wrap items-center justify-between gap-3 text-xs">
+                              <div className="flex items-center gap-3 basis-full sm:basis-0 sm:flex-1 min-w-0">
                                 {p.images?.[0] && (
                                   <img src={p.images[0]} alt={p.name} className="w-10 h-10 rounded-xl object-cover border border-gray-700" />
                                 )}
@@ -1990,7 +2057,13 @@ COMMIT;
                                   </p>
                                 </div>
                               </div>
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2 ml-auto">
+                                {p.category === 'covers' && (
+                                  <select aria-label={`Color de ${p.name}`} value={p.color || ''} onChange={e => saveColor(p, e.target.value)} className="w-24 bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-2 py-1.5">
+                                    <option value="">Color…</option>
+                                    {Object.keys(COVER_COLORS).map(c => <option key={c} value={c}>{c}</option>)}
+                                  </select>
+                                )}
                                 <button onClick={() => setEditingProduct(p)} className="px-3 py-1.5 rounded-xl bg-[#0033FF] text-white font-bold">Editar</button>
                                 <button onClick={() => deleteProduct(p.id)} className="p-2 text-red-400"><TrashIcon className="h-4 w-4" /></button>
                               </div>
@@ -2499,7 +2572,7 @@ COMMIT;
                     {cart.length === 0 ? <p className="text-xs text-gray-400 py-10 text-center">Carrito vacío</p> : cart.map(item => (
                       <div key={item.product.id} className="flex items-center justify-between gap-3 bg-[#0A0D14] p-3 rounded-2xl border border-gray-800 text-xs">
                         <div>
-                          <p className="font-bold">{item.product.name}</p>
+                          <p className="font-bold">{displayName(item.product)}</p>
                           <p className="text-[#8CFF00] font-bold">RD${Number(item.product.price).toFixed(2)}</p>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
@@ -2531,11 +2604,11 @@ COMMIT;
                   ))}
                 </div>
                 {selectedProduct.images?.length > 1 && <p className="text-center text-gray-400">Desliza para ver las {selectedProduct.images.length} fotos</p>}
-                  <h3 className="text-lg font-bold font-display">{selectedProduct.name}</h3>
+                  <h3 className="text-lg font-bold font-display">{displayName(selectedProduct)}</h3>
                   <p className="text-xl font-black text-[#8CFF00] font-display">RD${Number(selectedProduct.price).toFixed(2)}</p>
                   <p className="text-gray-600 dark:text-gray-300 text-sm whitespace-pre-wrap">{selectedProduct.description}</p>
                   <div className="sticky bottom-0 grid grid-cols-2 gap-2 pt-2 bg-white dark:bg-[#121824]">
-                  <a href={`https://wa.me/${settings.whatsapp}?text=${encodeURIComponent(`Hola BCO Tech, quiero consultar por: ${selectedProduct.name} (RD$${Number(selectedProduct.price).toFixed(2)})`)}`} target="_blank" rel="noreferrer" className="py-3.5 rounded-xl border border-green-500 text-green-500 font-extrabold uppercase text-center">WhatsApp</a>
+                  <a href={`https://wa.me/${settings.whatsapp}?text=${encodeURIComponent(`Hola BCO Tech, quiero consultar por: ${displayName(selectedProduct)} (RD$${Number(selectedProduct.price).toFixed(2)})`)}`} target="_blank" rel="noreferrer" className="py-3.5 rounded-xl border border-green-500 text-green-500 font-extrabold uppercase text-center">WhatsApp</a>
                   <button onClick={() => { addToCart(selectedProduct, 1); setSelectedProduct(null); }} className="py-3.5 rounded-xl bg-[#8CFF00] text-black font-extrabold uppercase disabled:opacity-40">Agregar</button>
                 </div>
                 </div>
@@ -2604,6 +2677,22 @@ COMMIT;
                   {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </label>
+              {editingProduct.category === 'covers' && (
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="block text-[10px] uppercase font-bold text-gray-400">Modelo de iPhone
+                    <select aria-label="Modelo de iPhone" value={phoneModelOf(editingProduct)} onChange={e => setEditingProduct({ ...editingProduct, phone_model: e.target.value || null })} className="w-full bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2 mt-1">
+                      <option value="">Sin modelo</option>
+                      {IPHONE_MODELS.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  </label>
+                  <label className="block text-[10px] uppercase font-bold text-gray-400">Color
+                    <select aria-label="Color del cover" value={editingProduct.color || ''} onChange={e => setEditingProduct({ ...editingProduct, color: e.target.value || null })} className="w-full bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2 mt-1">
+                      <option value="">Sin color</option>
+                      {Object.keys(COVER_COLORS).map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </label>
+                </div>
+              )}
               <label className="block text-[10px] uppercase font-bold text-gray-400">Existencias
                 <input type="number" min="0" step="1" value={editingProduct.stock ?? 0} onChange={e => setEditingProduct({ ...editingProduct, stock: Math.max(0, parseInt(e.target.value, 10) || 0) })} className="w-full bg-[#0A0D14] border border-gray-700 rounded-xl px-3 py-2 mt-1" />
               </label>
