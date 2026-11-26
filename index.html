@@ -2059,6 +2059,16 @@ COMMIT;
                           )}
                         </div>
 
+                        <div className="p-4 rounded-2xl bg-[#0A0D14] border border-amber-500/40 space-y-1">
+                          <p className="text-[11px] uppercase font-bold text-gray-400">Inversión en stock disponible</p>
+                          <p data-testid="inversion-stock" className="text-xl font-black font-display text-amber-400 break-words">
+                            RD${inventory.reduce((n, p) => n + (hasCost(p) ? Number(p.cost) * Number(p.stock || 0) : 0), 0).toFixed(2)}
+                          </p>
+                          <p className="text-[11px] text-gray-400">
+                            {inventory.reduce((n, p) => n + Number(p.stock || 0), 0)} unidades disponibles, cada una multiplicada por su costo. El detalle está en Inventario.
+                          </p>
+                        </div>
+
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                           <div className="p-4 rounded-2xl bg-[#0A0D14] border border-gray-800 space-y-1">
                             <p className="text-[11px] uppercase font-bold text-gray-400">Ventas ({monthlyStats.currentMonth.fullLabel})</p>
