@@ -520,10 +520,35 @@ CREATE POLICY "crear pedidos" ON public.orders FOR INSERT TO anon, authenticated
 
 -- Descontar inventario al confirmar y devolverlo al cancelar
 CREATE OR REPLACE FUNCTION public.ajustar_stock() RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
-DECLARE item JSONB; pos BIGINT; disponible INT; tomado INT;
+DECLARE item JSONB; pos BIGINT; disponible INT; tomado INT; devolver BOOLEAN := FALSE; descontar BOOLEAN := FALSE;
 BEGIN
+  NEW.stock_discounted := OLD.stock_discounted;
   IF NEW.status IN ('Confirmado','Entregado') AND NOT OLD.stock_discounted THEN
-    NEW.stock_discounted := TRUE;
+    descontar := TRUE; NEW.stock_discounted := TRUE;
+  ELSIF NEW.status NOT IN ('Confirmado','Entregado') AND OLD.stock_discounted THEN
+    devolver := TRUE; NEW.stock_discounted := FALSE;
+  ELSIF OLD.stock_discounted THEN
+    -- Pedido ya descontado y editado: si cambian productos o cantidades se ajusta el stock
+    IF (SELECT jsonb_agg(jsonb_build_array(value->'product'->>'id', (value->>'quantity')::INT) ORDER BY ordinality) FROM jsonb_array_elements(OLD.items) WITH ORDINALITY)
+       IS DISTINCT FROM
+       (SELECT jsonb_agg(jsonb_build_array(value->'product'->>'id', (value->>'quantity')::INT) ORDER BY ordinality) FROM jsonb_array_elements(NEW.items) WITH ORDINALITY) THEN
+      devolver := TRUE; descontar := TRUE;
+    ELSE
+      SELECT COALESCE(jsonb_agg(CASE WHEN (OLD.items->((n.ordinality - 1)::INT)) ? 'stock_taken'
+               THEN n.value || jsonb_build_object('stock_taken', OLD.items->((n.ordinality - 1)::INT)->'stock_taken')
+               ELSE n.value - 'stock_taken' END ORDER BY n.ordinality), '[]'::jsonb)
+        INTO NEW.items FROM jsonb_array_elements(NEW.items) WITH ORDINALITY n;
+    END IF;
+  END IF;
+
+  IF devolver THEN
+    -- Se devuelve solo lo que se habia descontado
+    FOR item IN SELECT value FROM jsonb_array_elements(OLD.items) LOOP
+      UPDATE public.products SET stock = stock + COALESCE((item->>'stock_taken')::INT, (item->>'quantity')::INT) WHERE id = item->'product'->>'id';
+    END LOOP;
+  END IF;
+
+  IF descontar THEN
     IF EXISTS (SELECT 1 FROM jsonb_array_elements(NEW.items) e WHERE (e->>'quantity')::INT <= 0) THEN RAISE EXCEPTION 'Cantidad no valida en el pedido'; END IF;
     -- Se puede vender sin existencias: se descuenta lo que haya, nunca por debajo de 0
     FOR item, pos IN SELECT value, ordinality FROM jsonb_array_elements(NEW.items) WITH ORDINALITY LOOP
@@ -532,17 +557,11 @@ BEGIN
       UPDATE public.products SET stock = stock - tomado WHERE id = item->'product'->>'id';
       NEW.items := jsonb_set(NEW.items, ARRAY[(pos - 1)::TEXT, 'stock_taken'], to_jsonb(tomado));
     END LOOP;
-  ELSIF NEW.status NOT IN ('Confirmado','Entregado') AND OLD.stock_discounted THEN
-    NEW.stock_discounted := FALSE;
-    -- Al cancelar se devuelve solo lo que se desconto
-    FOR item IN SELECT value FROM jsonb_array_elements(NEW.items) LOOP
-      UPDATE public.products SET stock = stock + COALESCE((item->>'stock_taken')::INT, (item->>'quantity')::INT) WHERE id = item->'product'->>'id';
-    END LOOP;
   END IF;
   RETURN NEW;
 END $$;
 DROP TRIGGER IF EXISTS pedidos_stock ON public.orders;
-CREATE TRIGGER pedidos_stock BEFORE UPDATE OF status ON public.orders FOR EACH ROW EXECUTE FUNCTION public.ajustar_stock();
+CREATE TRIGGER pedidos_stock BEFORE UPDATE OF status, items ON public.orders FOR EACH ROW EXECUTE FUNCTION public.ajustar_stock();
 COMMIT;
 
 -- DESPUES: crea tu usuario en Authentication > Users y ejecuta (con tu correo):
@@ -964,8 +983,10 @@ COMMIT;
         const [editingProduct, setEditingProduct] = useState(null);
         const [offerDrafts, setOfferDrafts] = useState({});
         const [inventorySearch, setInventorySearch] = useState('');
-        const [priceEdit, setPriceEdit] = useState(null); // { id, prices: [], total: '' }
+        const [orderEdit, setOrderEdit] = useState(null); // copia del pedido que se está editando
+        const [addSearch, setAddSearch] = useState('');
         const [productSearch, setProductSearch] = useState('');
+        const [bulk, setBulk] = useState(null); // varios covers con el mismo título
         const [checkoutForm, setCheckoutForm] = useState({
           name: '',
           phone: '',
@@ -1140,29 +1161,62 @@ COMMIT;
         };
 
         // Precio especial: cambia solo este pedido, no el precio de la tienda
-        const editedTotal = (order, prices) => (order.items || []).reduce((sum, item, n) => sum + Number(item.quantity || 1) * Number(prices[n] || 0), 0);
+        const linesSum = (lines) => Math.round(lines.reduce((sum, l) => sum + Number(l.qty || 0) * Number(l.price || 0), 0) * 100) / 100;
+        const itemsSum = (order) => linesSum((order.items || []).map(i => ({ qty: i.quantity || 1, price: i.product?.price })));
 
-        const itemsSum = (order) => Math.round(editedTotal(order, (order.items || []).map(i => i.product?.price)) * 100) / 100;
-
-        const saveOrderPrices = async (order) => {
-          const prices = priceEdit.prices;
-          const manual = String(priceEdit.total ?? '').trim();
-          if (manual !== '' && !(Number(manual) >= 0)) return showToast('Revisa el total: no puede ser negativo');
-          if (manual !== '' && Number(manual) === 0 && !window.confirm('El total quedará en RD$0. ¿Guardar así?')) return;
-          if (prices.some(v => String(v).trim() === '' || !(Number(v) >= 0))) return showToast('Revisa los precios: no pueden quedar vacíos ni ser negativos');
-          if (prices.some(v => Number(v) === 0) && !window.confirm('Hay un artículo en RD$0. ¿Guardar así?')) return;
-          const items = (order.items || []).map((item, n) => {
-            const price = Math.round(Number(prices[n]) * 100) / 100;
-            const listPrice = Number(item.product?.list_price ?? item.product?.price ?? 0);
-            const { list_price, ...product } = item.product || {};
-            return { ...item, product: { ...product, price, ...(price !== listPrice ? { list_price: listPrice } : {}) } };
+        const startOrderEdit = (o) => {
+          const items = Array.isArray(o.items) ? o.items : [];
+          setAddSearch('');
+          setOrderEdit({
+            id: o.id,
+            customer_name: o.customer_name || '', phone: o.phone || '', address: o.address || '',
+            payment_method: o.payment_method || 'efectivo', notes: o.notes || '',
+            lines: items.map((item, n) => ({ key: `${n}-${item.product?.id}`, item, qty: String(item.quantity || 1), price: String(item.product?.price ?? 0) })),
+            hadItems: items.length > 0,
+            // El total solo queda escrito si ya era distinto a la suma
+            total: !items.length || Math.abs(Number(o.total) - itemsSum(o)) >= 0.01 ? String(o.total ?? 0) : ''
           });
-          const total = Math.round((manual !== '' ? Number(manual) : editedTotal(order, items.map(i => i.product.price))) * 100) / 100;
-          const { data, error } = await supabaseClient.from('orders').update({ items, total }).eq('id', order.id).select('id');
-          if (error || !data?.length) return showToast(`No se guardó el precio${error ? `: ${error.message}` : ': vuelve a entrar a Admin'}`);
-          setPriceEdit(null);
+        };
+
+        const setEditField = (field, value) => setOrderEdit(prev => ({ ...prev, [field]: value }));
+        const setLine = (key, field, value) => setOrderEdit(prev => ({ ...prev, lines: prev.lines.map(l => l.key === key ? { ...l, [field]: value } : l) }));
+
+        const addLineToOrder = (p) => {
+          setOrderEdit(prev => {
+            const same = prev.lines.find(l => l.item.product?.id === p.id);
+            if (same) return { ...prev, lines: prev.lines.map(l => l === same ? { ...l, qty: String(Number(l.qty || 0) + 1) } : l) };
+            const item = { product: { id: p.id, name: displayName(p), price: Number(p.price) }, quantity: 1 };
+            return { ...prev, lines: [...prev.lines, { key: `nuevo-${p.id}`, item, qty: '1', price: String(p.price) }] };
+          });
+          setAddSearch('');
+        };
+
+        const saveOrder = async () => {
+          const e = orderEdit;
+          if (!e.customer_name.trim()) return showToast('Escribe el nombre del cliente');
+          if (e.hadItems && !e.lines.length) return showToast('El pedido necesita al menos un producto. Para eliminarlo usa el botón de borrar.');
+          if (e.lines.some(l => !Number.isInteger(Number(l.qty)) || !(Number(l.qty) >= 1))) return showToast('Revisa las cantidades: deben ser 1 o más');
+          if (e.lines.some(l => String(l.price).trim() === '' || !(Number(l.price) >= 0))) return showToast('Revisa los precios: no pueden quedar vacíos ni ser negativos');
+          const manual = String(e.total).trim();
+          if (manual !== '' && !(Number(manual) >= 0)) return showToast('Revisa el total: no puede ser negativo');
+          const items = e.lines.map(l => {
+            const price = Math.round(Number(l.price) * 100) / 100;
+            const listPrice = Number(l.item.product?.list_price ?? l.item.product?.price ?? 0);
+            const { list_price, ...product } = l.item.product || {};
+            return { ...l.item, quantity: Number(l.qty), product: { ...product, price, ...(price !== listPrice ? { list_price: listPrice } : {}) } };
+          });
+          const total = Math.round((manual !== '' ? Number(manual) : linesSum(e.lines)) * 100) / 100;
+          if (total === 0 && !window.confirm('El total quedará en RD$0. ¿Guardar así?')) return;
+          const changes = {
+            customer_name: e.customer_name.trim(), phone: e.phone.trim(), address: e.address.trim(),
+            payment_method: e.payment_method, notes: e.notes.trim(), items, total
+          };
+          const { data, error } = await supabaseClient.from('orders').update(changes).eq('id', e.id).select('id');
+          if (error || !data?.length) return showToast(`No se guardó el pedido${error ? `: ${error.message}` : ': vuelve a entrar a Admin'}`);
+          setOrderEdit(null);
           await fetchOrdersFromClient(supabaseClient);
-          showToast(`Guardado. Nuevo total: RD$${total.toFixed(2)}`);
+          await fetchProductsFromClient(supabaseClient);
+          showToast(`Pedido guardado. Total: RD$${total.toFixed(2)}`);
         };
 
         const updateOrderStatus = async (id, status) => {
@@ -1512,6 +1566,51 @@ COMMIT;
           if (error || !data?.length) return showToast(`No se guardó el color${error ? `: ${error.message}` : ': vuelve a entrar a Admin'}`);
           setProducts(prev => prev.map(x => x.id === p.id ? { ...x, color: color || null } : x));
           showToast(color ? `Color guardado: ${color}` : 'Color quitado');
+        };
+
+        const addBulkPhotos = async (files) => {
+          try {
+            const photos = await Promise.all(files.map(file => compressProductImage(file)));
+            setBulk(prev => prev && ({ ...prev, items: [...prev.items, ...photos.map(src => ({ key: Math.random().toString(36).slice(2), src, color: '' }))] }));
+          } catch {
+            showToast('No se pudo cargar una de las fotos');
+          }
+        };
+
+        // Crea un cover por cada foto, todos con el mismo título, precio y modelo
+        const saveBulk = async () => {
+          const name = bulk.name.trim();
+          if (!name || !(Number(bulk.price) > 0)) return showToast('Escribe el título y un precio mayor que 0');
+          if (!bulk.items.length) return showToast('Elige las fotos');
+          if (!supabaseClient) return showToast('Sin conexión: no se guardó');
+          setBulk(prev => ({ ...prev, saving: true }));
+          let done = 0;
+          try {
+            for (const photo of bulk.items) {
+              const id = `prod-${Date.now()}-${photo.key}`;
+              const row = {
+                id, name, category: 'covers', price: Number(bulk.price), stock: Math.max(0, parseInt(bulk.stock, 10) || 0),
+                active: true, on_sale: false, description: bulk.description.trim(),
+                phone_model: bulk.phone_model || null, color: photo.color || null,
+                images: await uploadPhotos(supabaseClient, id, [photo.src])
+              };
+              const { error } = await supabaseClient.from('products').insert([row]);
+              if (error) throw new Error(error.message);
+              done++;
+              // Lo ya guardado sale de la lista, para no repetirlo si hay que reintentar
+              setBulk(prev => ({ ...prev, items: prev.items.filter(x => x.key !== photo.key) }));
+              if (String(bulk.cost).trim() !== '') {
+                const { error: costError } = await supabaseClient.from('product_costs').upsert([{ product_id: id, cost: Number(bulk.cost) || 0 }]);
+                if (costError) showToast(`Cover guardado, pero el costo no: ${costError.message}`);
+              }
+            }
+            setBulk(null);
+            showToast(`${done} cover(s) guardado(s)`);
+          } catch (err) {
+            setBulk(prev => prev && ({ ...prev, saving: false }));
+            showToast(`Se guardaron ${done}. Faltan los demás: ${err.message}`);
+          }
+          await fetchProductsFromClient(supabaseClient);
         };
 
         const saveProduct = async (prod) => {
@@ -2038,6 +2137,7 @@ COMMIT;
                                 Sincronizar
                               </button>
                             )}
+                            <button type="button" onClick={() => setBulk({ name: '', price: '', cost: '', stock: '1', phone_model: '', description: '', items: [], saving: false })} className="px-3 py-2 rounded-xl border border-[#8CFF00]/60 text-[#8CFF00] font-bold text-xs">Varios covers</button>
                             <button onClick={() => setEditingProduct({ name: '', category: 'auriculares', cost: 0, price: 0, stock: 10, active: true, on_sale: false, description: '', images: [] })} className="bg-[#8CFF00] text-black font-bold px-4 py-2 rounded-xl text-xs uppercase flex items-center gap-1">
                               <PlusIcon className="h-4 w-4" /> Nuevo
                             </button>
@@ -2215,30 +2315,13 @@ COMMIT;
                                       {qty} × RD${unit.toFixed(2)}
                                       {item.product?.list_price !== undefined && <span className="ml-2 text-amber-400">Precio especial <s>RD${Number(item.product.list_price).toFixed(2)}</s></span>}
                                     </p>
-                                    {priceEdit?.id === o.id && (
-                                      <label className="block mt-1 text-gray-400">Precio por unidad (RD$)
-                                        <input type="number" min="0" step="0.01" inputMode="decimal" aria-label={`Precio especial de ${item.product?.name}`} value={priceEdit.prices[n] ?? ''} onChange={e => setPriceEdit(prev => ({ ...prev, prices: prev.prices.map((v, k) => k === n ? e.target.value : v) }))} className="block mt-1 w-32 bg-[#121824] text-gray-100 border border-[#8CFF00]/60 rounded-xl px-3 py-2" />
-                                      </label>
-                                    )}
-                                  </div>
+                                    </div>
                                   <p className="font-bold">RD${(qty * unit).toFixed(2)}</p>
                                 </div>
                               );
                             })}
                           </div>
-                          {priceEdit?.id === o.id ? (
-                            <div className="flex flex-wrap items-center gap-2">
-                              <label className="w-full font-bold">Total para cliente mayorista (RD$)
-                                <input type="number" min="0" step="0.01" inputMode="decimal" aria-label="Total del pedido" value={priceEdit.total} placeholder={editedTotal(o, priceEdit.prices).toFixed(2)} onChange={e => { const value = e.target.value; setPriceEdit(prev => ({ ...prev, total: value })); }} className="block mt-1 w-full sm:w-56 bg-[#121824] text-gray-100 border border-[#8CFF00]/60 rounded-xl px-3 py-2" />
-                                <span className="block mt-1 font-normal text-gray-400">Déjalo vacío para sumar los precios de arriba.</span>
-                              </label>
-                              <p className="font-bold mr-auto">Nuevo total: RD${Number(String(priceEdit.total).trim() === '' ? editedTotal(o, priceEdit.prices) : priceEdit.total).toFixed(2)}</p>
-                              <button type="button" onClick={() => setPriceEdit(null)} className="px-3 py-2 rounded-xl bg-gray-800 text-gray-100 font-bold">Cancelar</button>
-                              <button type="button" onClick={() => saveOrderPrices(o)} className="px-3 py-2 rounded-xl bg-[#8CFF00] text-black font-bold">Guardar cambios</button>
-                            </div>
-                          ) : Array.isArray(o.items) && o.items.length > 0 && (
-                            <button type="button" onClick={() => setPriceEdit({ id: o.id, prices: o.items.map(item => String(item.product?.price ?? 0)), total: Math.abs(Number(o.total) - itemsSum(o)) >= 0.01 ? String(o.total) : '' })} className="px-3 py-2 rounded-xl border border-[#8CFF00]/60 text-[#8CFF00] font-bold">Cambiar total / precios</button>
-                          )}
+                          <button type="button" onClick={() => startOrderEdit(o)} className="w-full sm:w-auto px-3 py-2 rounded-xl border border-[#8CFF00]/60 text-[#8CFF00] font-bold">Editar pedido</button>
                           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-800 pt-3">
                             <button type="button" onClick={() => generateInvoicePDF(o)} className="px-3 py-1.5 rounded-xl bg-[#0033FF] text-white font-bold">Descargar factura PDF</button>
                             <p className="font-bold text-sm">Total: <span className="text-[#8CFF00]">RD${Number(o.total || 0).toFixed(2)}</span></p>
@@ -2651,6 +2734,107 @@ COMMIT;
             )}
 
             {/* Modal de Creación/Edición de Producto con carga de múltiples fotos WebP o por URL */}
+            {orderEdit && (
+              <div className="hoja fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80">
+                <div data-testid="editor-pedido" className="bg-[#121824] text-gray-100 border border-gray-700 rounded-3xl max-w-lg w-full p-5 space-y-3 text-xs max-h-[90vh] overflow-y-auto">
+                  <h3 className="font-display font-bold uppercase text-sm">Editar pedido {orderEdit.id}</h3>
+                  <label className="block font-bold">Cliente<input value={orderEdit.customer_name} onChange={e => setEditField('customer_name', e.target.value)} className="w-full mt-1 bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2 text-base sm:text-xs" /></label>
+                  <label className="block font-bold">Teléfono<input type="tel" value={orderEdit.phone} onChange={e => setEditField('phone', e.target.value)} className="w-full mt-1 bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2 text-base sm:text-xs" /></label>
+                  <label className="block font-bold">Dirección<textarea rows="2" value={orderEdit.address} onChange={e => setEditField('address', e.target.value)} className="w-full mt-1 bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2 text-base sm:text-xs" /></label>
+                  <label className="block font-bold">Método de pago
+                    <select value={orderEdit.payment_method} onChange={e => setEditField('payment_method', e.target.value)} className="w-full mt-1 bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2 text-base sm:text-xs">
+                      <option value="efectivo">Efectivo contra entrega</option>
+                      <option value="transferencia">Transferencia bancaria</option>
+                      <option value="tarjeta">Tarjeta / Link de pago</option>
+                      {!['efectivo', 'transferencia', 'tarjeta'].includes(orderEdit.payment_method) && <option value={orderEdit.payment_method}>{orderEdit.payment_method}</option>}
+                    </select>
+                  </label>
+                  <label className="block font-bold">Notas<textarea rows="2" value={orderEdit.notes} onChange={e => setEditField('notes', e.target.value)} className="w-full mt-1 bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2 text-base sm:text-xs" /></label>
+
+                  <p className="font-bold text-[#8CFF00] uppercase pt-1">Productos</p>
+                  {orderEdit.lines.map(l => (
+                    <div key={l.key} data-testid="linea-pedido" className="p-3 rounded-2xl border border-gray-800 space-y-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="font-bold break-words">{l.item.product?.name || 'Producto'}</p>
+                        <button type="button" aria-label={`Quitar ${l.item.product?.name}`} onClick={() => setOrderEdit(prev => ({ ...prev, lines: prev.lines.filter(x => x.key !== l.key) }))} className="p-2 rounded-xl bg-red-500/15 text-red-400 shrink-0"><TrashIcon className="h-4 w-4" /></button>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="block text-gray-400">Cantidad<input type="number" min="1" step="1" inputMode="numeric" aria-label={`Cantidad de ${l.item.product?.name}`} value={l.qty} onChange={e => setLine(l.key, 'qty', e.target.value)} className="w-full mt-1 bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2 text-base sm:text-xs" /></label>
+                        <label className="block text-gray-400">Precio (RD$)<input type="number" min="0" step="0.01" inputMode="decimal" aria-label={`Precio de ${l.item.product?.name}`} value={l.price} onChange={e => setLine(l.key, 'price', e.target.value)} className="w-full mt-1 bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2 text-base sm:text-xs" /></label>
+                      </div>
+                    </div>
+                  ))}
+                  <input type="search" aria-label="Añadir producto al pedido" placeholder="Buscar producto para añadir" value={addSearch} onChange={e => setAddSearch(e.target.value)} className="w-full mt-1 bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2 text-base sm:text-xs" />
+                  {addSearch.trim() && (
+                    <div className="rounded-2xl border border-gray-800 divide-y divide-gray-800">
+                      {products.filter(p => normalizeNlpText(displayName(p)).includes(normalizeNlpText(addSearch))).slice(0, 8).map(p => (
+                        <button type="button" key={p.id} onClick={() => addLineToOrder(p)} className="w-full flex items-center gap-2 p-2 text-left">
+                          {p.images?.[0] && <img src={p.images[0]} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" />}
+                          <span className="flex-1 min-w-0">{displayName(p)}</span>
+                          <span className="font-bold text-[#8CFF00]">RD${Number(p.price).toFixed(2)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  <label className="block font-bold">Total (mayorista, opcional)
+                    <input type="number" min="0" step="0.01" inputMode="decimal" aria-label="Total del pedido" value={orderEdit.total} placeholder={linesSum(orderEdit.lines).toFixed(2)} onChange={e => setEditField('total', e.target.value)} className="w-full mt-1 bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2 text-base sm:text-xs" />
+                    <span className="block mt-1 font-normal text-gray-400">Déjalo vacío para sumar los productos.</span>
+                  </label>
+                  <p className="font-bold text-sm">Nuevo total: RD${Number(String(orderEdit.total).trim() === '' ? linesSum(orderEdit.lines) : orderEdit.total).toFixed(2)}</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button type="button" onClick={() => setOrderEdit(null)} className="py-3 rounded-xl bg-gray-800 text-gray-100 font-bold">Cancelar</button>
+                    <button type="button" onClick={saveOrder} className="py-3 rounded-xl bg-[#8CFF00] text-black font-bold">Guardar cambios</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {bulk && (
+              <div className="hoja fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80">
+                <div data-testid="varios-covers" className="bg-[#121824] text-gray-100 border border-gray-700 rounded-3xl max-w-lg w-full p-5 space-y-3 text-xs max-h-[90vh] overflow-y-auto">
+                  <h3 className="font-display font-bold uppercase text-sm">Varios covers con el mismo título</h3>
+                  <p className="text-gray-400">Cada foto se publica como un cover aparte.</p>
+                  <label className="block font-bold">Título<input value={bulk.name} onChange={e => setBulk({ ...bulk, name: e.target.value })} placeholder="Cover de iPhone 14 Pro" className="w-full mt-1 bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2 text-base sm:text-xs" /></label>
+                  <label className="block font-bold">Modelo de iPhone
+                    <select aria-label="Modelo para todos" value={bulk.phone_model || phoneModelOf({ name: bulk.name })} onChange={e => setBulk({ ...bulk, phone_model: e.target.value })} className="w-full mt-1 bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2 text-base sm:text-xs">
+                      <option value="">Sin modelo</option>
+                      {IPHONE_MODELS.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <label className="block font-bold">Precio venta<input type="number" min="0" step="0.01" inputMode="decimal" value={bulk.price} onChange={e => setBulk({ ...bulk, price: e.target.value })} className="w-full mt-1 bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2 text-base sm:text-xs" /></label>
+                    <label className="block font-bold">Costo<input type="number" min="0" step="0.01" inputMode="decimal" value={bulk.cost} onChange={e => setBulk({ ...bulk, cost: e.target.value })} className="w-full mt-1 bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2 text-base sm:text-xs" /></label>
+                    <label className="block font-bold">Cantidad c/u<input type="number" min="0" step="1" inputMode="numeric" value={bulk.stock} onChange={e => setBulk({ ...bulk, stock: e.target.value })} className="w-full mt-1 bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2 text-base sm:text-xs" /></label>
+                  </div>
+                  <label className="block font-bold">Descripción (opcional)<textarea rows="2" value={bulk.description} onChange={e => setBulk({ ...bulk, description: e.target.value })} className="w-full mt-1 bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2 text-base sm:text-xs" /></label>
+                  <label className="block font-bold text-[#8CFF00]">Fotos (puedes elegir varias)
+                    <input type="file" accept="image/*" multiple aria-label="Fotos de los covers" disabled={bulk.saving} onChange={e => { const files = Array.from(e.target.files || []); e.target.value = ''; if (files.length) addBulkPhotos(files); }} className="block w-full mt-1 text-gray-300" />
+                  </label>
+                  {bulk.items.length > 0 && (
+                    <div className="grid grid-cols-3 gap-2">
+                      {bulk.items.map((photo, n) => (
+                        <div key={photo.key} data-testid="foto-cover" className="space-y-1">
+                          <div className="relative">
+                            <img src={photo.src} alt={`Foto ${n + 1}`} className="w-full aspect-square object-cover rounded-xl" />
+                            <button type="button" aria-label={`Quitar foto ${n + 1}`} disabled={bulk.saving} onClick={() => setBulk({ ...bulk, items: bulk.items.filter(x => x.key !== photo.key) })} className="absolute top-1 right-1 p-1.5 rounded-full bg-black/70 text-white"><XIcon className="h-4 w-4" /></button>
+                          </div>
+                          <select aria-label={`Color de la foto ${n + 1}`} value={photo.color} onChange={e => { const color = e.target.value; setBulk(prev => ({ ...prev, items: prev.items.map(x => x.key === photo.key ? { ...x, color } : x) })); }} className="w-full bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-1 py-1.5">
+                            <option value="">Color…</option>
+                            {Object.keys(COVER_COLORS).map(c => <option key={c} value={c}>{c}</option>)}
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="grid grid-cols-2 gap-2">
+                    <button type="button" disabled={bulk.saving} onClick={() => setBulk(null)} className="py-3 rounded-xl bg-gray-800 text-gray-100 font-bold disabled:opacity-40">Cancelar</button>
+                    <button type="button" disabled={bulk.saving} onClick={saveBulk} className="py-3 rounded-xl bg-[#8CFF00] text-black font-bold disabled:opacity-40">{bulk.saving ? 'Guardando…' : `Guardar ${bulk.items.length} cover(s)`}</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {editingProduct && (
               <div className="hoja fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80">
                 <div className="bg-white dark:bg-[#121824] border border-gray-700 rounded-3xl max-w-md w-full p-6 space-y-3 relative text-xs max-h-[90vh] overflow-y-auto">
