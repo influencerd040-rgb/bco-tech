@@ -986,7 +986,7 @@ COMMIT;
         const [orderEdit, setOrderEdit] = useState(null); // copia del pedido que se está editando
         const [addSearch, setAddSearch] = useState('');
         const [productSearch, setProductSearch] = useState('');
-        const [bulk, setBulk] = useState(null); // varios covers con el mismo título
+        const savingSplit = React.useRef(false);
         const [checkoutForm, setCheckoutForm] = useState({
           name: '',
           phone: '',
@@ -1568,47 +1568,38 @@ COMMIT;
           showToast(color ? `Color guardado: ${color}` : 'Color quitado');
         };
 
-        const addBulkPhotos = async (files) => {
-          try {
-            const photos = await Promise.all(files.map(file => compressProductImage(file)));
-            setBulk(prev => prev && ({ ...prev, items: [...prev.items, ...photos.map(src => ({ key: Math.random().toString(36).slice(2), src, color: '' }))] }));
-          } catch {
-            showToast('No se pudo cargar una de las fotos');
-          }
-        };
+        // Producto nuevo con varias fotos: un producto por foto (en covers viene marcado)
+        const splitsPhotos = (p) => !!p && !p.id && (p.images || []).length > 1 && (p._split ?? p.category === 'covers');
 
-        // Crea un cover por cada foto, todos con el mismo título, precio y modelo
-        const saveBulk = async () => {
-          const name = bulk.name.trim();
-          if (!name || !(Number(bulk.price) > 0)) return showToast('Escribe el título y un precio mayor que 0');
-          if (!bulk.items.length) return showToast('Elige las fotos');
-          if (!supabaseClient) return showToast('Sin conexión: no se guardó');
-          setBulk(prev => ({ ...prev, saving: true }));
+        const saveSplit = async (prod) => {
+          if (savingSplit.current) return;
+          savingSplit.current = true;
+          const { cost, created_at, id, images, _split, _colors = {}, ...base } = prod;
+          const batch = Date.now();
           let done = 0;
+          showToast(`Guardando ${images.length} productos…`);
           try {
-            for (const photo of bulk.items) {
-              const id = `prod-${Date.now()}-${photo.key}`;
-              const row = {
-                id, name, category: 'covers', price: Number(bulk.price), stock: Math.max(0, parseInt(bulk.stock, 10) || 0),
-                active: true, on_sale: false, description: bulk.description.trim(),
-                phone_model: bulk.phone_model || null, color: photo.color || null,
-                images: await uploadPhotos(supabaseClient, id, [photo.src])
-              };
+            for (const src of images) {
+              const rowId = `prod-${batch}-${done}`;
+              const row = { ...base, id: rowId, color: _colors[src] ?? base.color ?? null, images: await uploadPhotos(supabaseClient, rowId, [src]) };
+              if (!row.color) row.color = null;
               const { error } = await supabaseClient.from('products').insert([row]);
               if (error) throw new Error(error.message);
               done++;
-              // Lo ya guardado sale de la lista, para no repetirlo si hay que reintentar
-              setBulk(prev => ({ ...prev, items: prev.items.filter(x => x.key !== photo.key) }));
-              if (String(bulk.cost).trim() !== '') {
-                const { error: costError } = await supabaseClient.from('product_costs').upsert([{ product_id: id, cost: Number(bulk.cost) || 0 }]);
-                if (costError) showToast(`Cover guardado, pero el costo no: ${costError.message}`);
+              // La foto ya publicada sale del formulario, para no repetirla al reintentar
+              setEditingProduct(prev => prev && ({ ...prev, _split: true, images: prev.images.filter(x => x !== src) }));
+              if (cost !== undefined && cost !== null) {
+                const { error: costError } = await supabaseClient.from('product_costs').upsert([{ product_id: rowId, cost }]);
+                if (costError) showToast(`Producto guardado, pero el costo no: ${costError.message}`);
               }
             }
-            setBulk(null);
-            showToast(`${done} cover(s) guardado(s)`);
+            setEditingProduct(null);
+            setPhotoUrlDraft('');
+            showToast(`${done} productos guardados`);
           } catch (err) {
-            setBulk(prev => prev && ({ ...prev, saving: false }));
-            showToast(`Se guardaron ${done}. Faltan los demás: ${err.message}`);
+            showToast(`Se guardaron ${done}. Toca Guardar otra vez para los demás. (${err.message})`);
+          } finally {
+            savingSplit.current = false;
           }
           await fetchProductsFromClient(supabaseClient);
         };
@@ -1616,7 +1607,9 @@ COMMIT;
         const saveProduct = async (prod) => {
           if (!String(prod.name || '').trim() || !(Number(prod.price) > 0)) return showToast('Escribe un nombre y un precio mayor que 0');
           if (!supabaseClient) return showToast('Sin conexión: no se guardó');
-          const { cost, created_at, ...row } = { ...prod, id: prod.id || 'prod-' + Date.now() };
+          // Con una sola foto pendiente tras un fallo, se sigue por el mismo camino
+          if (splitsPhotos(prod) || (!prod.id && prod._split && (prod.images || []).length === 1)) return saveSplit(prod);
+          const { cost, created_at, _split, _colors, ...row } = { ...prod, id: prod.id || 'prod-' + Date.now() };
           try {
             row.images = await uploadPhotos(supabaseClient, row.id, row.images);
           } catch (err) {
@@ -2137,7 +2130,6 @@ COMMIT;
                                 Sincronizar
                               </button>
                             )}
-                            <button type="button" onClick={() => setBulk({ name: '', price: '', cost: '', stock: '1', phone_model: '', description: '', items: [], saving: false })} className="px-3 py-2 rounded-xl border border-[#8CFF00]/60 text-[#8CFF00] font-bold text-xs">Varios covers</button>
                             <button onClick={() => setEditingProduct({ name: '', category: 'auriculares', cost: 0, price: 0, stock: 10, active: true, on_sale: false, description: '', images: [] })} className="bg-[#8CFF00] text-black font-bold px-4 py-2 rounded-xl text-xs uppercase flex items-center gap-1">
                               <PlusIcon className="h-4 w-4" /> Nuevo
                             </button>
@@ -2790,51 +2782,6 @@ COMMIT;
               </div>
             )}
 
-            {bulk && (
-              <div className="hoja fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80">
-                <div data-testid="varios-covers" className="bg-[#121824] text-gray-100 border border-gray-700 rounded-3xl max-w-lg w-full p-5 space-y-3 text-xs max-h-[90vh] overflow-y-auto">
-                  <h3 className="font-display font-bold uppercase text-sm">Varios covers con el mismo título</h3>
-                  <p className="text-gray-400">Cada foto se publica como un cover aparte.</p>
-                  <label className="block font-bold">Título<input value={bulk.name} onChange={e => setBulk({ ...bulk, name: e.target.value })} placeholder="Cover de iPhone 14 Pro" className="w-full mt-1 bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2 text-base sm:text-xs" /></label>
-                  <label className="block font-bold">Modelo de iPhone
-                    <select aria-label="Modelo para todos" value={bulk.phone_model || phoneModelOf({ name: bulk.name })} onChange={e => setBulk({ ...bulk, phone_model: e.target.value })} className="w-full mt-1 bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2 text-base sm:text-xs">
-                      <option value="">Sin modelo</option>
-                      {IPHONE_MODELS.map(m => <option key={m} value={m}>{m}</option>)}
-                    </select>
-                  </label>
-                  <div className="grid grid-cols-3 gap-2">
-                    <label className="block font-bold">Precio venta<input type="number" min="0" step="0.01" inputMode="decimal" value={bulk.price} onChange={e => setBulk({ ...bulk, price: e.target.value })} className="w-full mt-1 bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2 text-base sm:text-xs" /></label>
-                    <label className="block font-bold">Costo<input type="number" min="0" step="0.01" inputMode="decimal" value={bulk.cost} onChange={e => setBulk({ ...bulk, cost: e.target.value })} className="w-full mt-1 bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2 text-base sm:text-xs" /></label>
-                    <label className="block font-bold">Cantidad c/u<input type="number" min="0" step="1" inputMode="numeric" value={bulk.stock} onChange={e => setBulk({ ...bulk, stock: e.target.value })} className="w-full mt-1 bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2 text-base sm:text-xs" /></label>
-                  </div>
-                  <label className="block font-bold">Descripción (opcional)<textarea rows="2" value={bulk.description} onChange={e => setBulk({ ...bulk, description: e.target.value })} className="w-full mt-1 bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-3 py-2 text-base sm:text-xs" /></label>
-                  <label className="block font-bold text-[#8CFF00]">Fotos (puedes elegir varias)
-                    <input type="file" accept="image/*" multiple aria-label="Fotos de los covers" disabled={bulk.saving} onChange={e => { const files = Array.from(e.target.files || []); e.target.value = ''; if (files.length) addBulkPhotos(files); }} className="block w-full mt-1 text-gray-300" />
-                  </label>
-                  {bulk.items.length > 0 && (
-                    <div className="grid grid-cols-3 gap-2">
-                      {bulk.items.map((photo, n) => (
-                        <div key={photo.key} data-testid="foto-cover" className="space-y-1">
-                          <div className="relative">
-                            <img src={photo.src} alt={`Foto ${n + 1}`} className="w-full aspect-square object-cover rounded-xl" />
-                            <button type="button" aria-label={`Quitar foto ${n + 1}`} disabled={bulk.saving} onClick={() => setBulk({ ...bulk, items: bulk.items.filter(x => x.key !== photo.key) })} className="absolute top-1 right-1 p-1.5 rounded-full bg-black/70 text-white"><XIcon className="h-4 w-4" /></button>
-                          </div>
-                          <select aria-label={`Color de la foto ${n + 1}`} value={photo.color} onChange={e => { const color = e.target.value; setBulk(prev => ({ ...prev, items: prev.items.map(x => x.key === photo.key ? { ...x, color } : x) })); }} className="w-full bg-[#0A0D14] text-gray-100 border border-gray-700 rounded-xl px-1 py-1.5">
-                            <option value="">Color…</option>
-                            {Object.keys(COVER_COLORS).map(c => <option key={c} value={c}>{c}</option>)}
-                          </select>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <div className="grid grid-cols-2 gap-2">
-                    <button type="button" disabled={bulk.saving} onClick={() => setBulk(null)} className="py-3 rounded-xl bg-gray-800 text-gray-100 font-bold disabled:opacity-40">Cancelar</button>
-                    <button type="button" disabled={bulk.saving} onClick={saveBulk} className="py-3 rounded-xl bg-[#8CFF00] text-black font-bold disabled:opacity-40">{bulk.saving ? 'Guardando…' : `Guardar ${bulk.items.length} cover(s)`}</button>
-                  </div>
-                </div>
-              </div>
-            )}
-
             {editingProduct && (
               <div className="hoja fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80">
                 <div className="bg-white dark:bg-[#121824] border border-gray-700 rounded-3xl max-w-md w-full p-6 space-y-3 relative text-xs max-h-[90vh] overflow-y-auto">
@@ -2968,7 +2915,33 @@ COMMIT;
                   </div>
 
                   <textarea value={editingProduct.description} onChange={e => setEditingProduct({ ...editingProduct, description: e.target.value })} placeholder="Descripción" className="w-full bg-[#0A0D14] border border-gray-700 rounded-xl px-3 py-2" />
-                  <button onClick={() => saveProduct(editingProduct)} className="w-full bg-[#8CFF00] text-black font-extrabold py-2.5 rounded-xl uppercase">Guardar</button>
+                  {!editingProduct.id && (editingProduct.images || []).length > 1 && (
+                    <div data-testid="separar-fotos" className="p-3 rounded-2xl bg-[#0A0D14] text-gray-100 border border-[#8CFF00]/60 space-y-2">
+                      <label className="flex items-start gap-2 font-bold">
+                        <input type="checkbox" checked={splitsPhotos(editingProduct)} onChange={e => { const on = e.target.checked; setEditingProduct(prev => ({ ...prev, _split: on })); }} className="mt-0.5" />
+                        Crear un producto por cada foto
+                      </label>
+                      {splitsPhotos(editingProduct) ? (
+                        <>
+                          <p className="text-gray-400">Se crearán {editingProduct.images.length} productos con el mismo nombre y datos. Cada uno con existencias: {editingProduct.stock ?? 0}.</p>
+                          {editingProduct.category === 'covers' && (
+                            <div className="grid grid-cols-3 gap-2">
+                              {editingProduct.images.map((src, n) => (
+                                <div key={n} className="space-y-1">
+                                  <img src={src} alt="" className="w-full aspect-square object-cover rounded-xl" />
+                                  <select aria-label={`Color de la foto ${n + 1}`} value={editingProduct._colors?.[src] ?? editingProduct.color ?? ''} onChange={e => { const color = e.target.value; setEditingProduct(prev => ({ ...prev, _colors: { ...prev._colors, [src]: color } })); }} className="w-full bg-[#121824] text-gray-100 border border-gray-700 rounded-xl px-1 py-1.5">
+                                    <option value="">Color…</option>
+                                    {Object.keys(COVER_COLORS).map(c => <option key={c} value={c}>{c}</option>)}
+                                  </select>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </>
+                      ) : <p className="text-gray-400">Será un solo producto con {editingProduct.images.length} fotos.</p>}
+                    </div>
+                  )}
+                  <button onClick={() => saveProduct(editingProduct)} className="w-full bg-[#8CFF00] text-black font-extrabold py-2.5 rounded-xl uppercase">{splitsPhotos(editingProduct) ? `Guardar ${editingProduct.images.length} productos` : 'Guardar'}</button>
                 </div>
               </div>
             )}
