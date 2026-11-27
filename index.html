@@ -987,6 +987,16 @@ COMMIT;
         const [addSearch, setAddSearch] = useState('');
         const [productSearch, setProductSearch] = useState('');
         const savingSplit = React.useRef(false);
+        // Evita guardar el mismo producto varias veces por tocar Guardar mientras sube las fotos
+        const savingForm = React.useRef(false);
+        const [savingProduct, setSavingProduct] = useState(false);
+        const saveFromForm = async () => {
+          if (savingForm.current) return;
+          savingForm.current = true;
+          setSavingProduct(true);
+          try { await saveProduct(editingProduct); }
+          finally { savingForm.current = false; setSavingProduct(false); }
+        };
         const [checkoutForm, setCheckoutForm] = useState({
           name: '',
           phone: '',
@@ -2941,7 +2951,7 @@ COMMIT;
                       ) : <p className="text-gray-400">Será un solo producto con {editingProduct.images.length} fotos.</p>}
                     </div>
                   )}
-                  <button onClick={() => saveProduct(editingProduct)} className="w-full bg-[#8CFF00] text-black font-extrabold py-2.5 rounded-xl uppercase">{splitsPhotos(editingProduct) ? `Guardar ${editingProduct.images.length} productos` : 'Guardar'}</button>
+                  <button onClick={saveFromForm} disabled={savingProduct} className="disabled:opacity-50 w-full bg-[#8CFF00] text-black font-extrabold py-2.5 rounded-xl uppercase">{savingProduct ? 'Guardando… espera' : splitsPhotos(editingProduct) ? `Guardar ${editingProduct.images.length} productos` : 'Guardar'}</button>
                 </div>
               </div>
             )}
