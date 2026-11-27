@@ -476,6 +476,7 @@ ALTER TABLE public.store_settings ADD COLUMN IF NOT EXISTS invoice_whatsapp TEXT
 ALTER TABLE public.store_settings ADD COLUMN IF NOT EXISTS hero_images JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE public.store_settings ADD COLUMN IF NOT EXISTS custom_logo_url TEXT;
 ALTER TABLE public.store_settings ADD COLUMN IF NOT EXISTS logo_pill_in_dark BOOLEAN DEFAULT TRUE;
+ALTER TABLE public.store_settings ADD COLUMN IF NOT EXISTS store_discount NUMERIC NOT NULL DEFAULT 0 CHECK (store_discount >= 0 AND store_discount <= 90);
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS stock_discounted BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE public.products ADD COLUMN IF NOT EXISTS color TEXT, ADD COLUMN IF NOT EXISTS phone_model TEXT;
 INSERT INTO public.categories (id, name) VALUES ('auriculares','Auriculares'), ('teclados','Teclado y Mouse'), ('accesorios','Accesorios'), ('gadgets','Gadgets'), ('relojes','Relojes'), ('covers','Covers'), ('protectores','Protectores de pantalla'), ('cargadores','Cargadores') ON CONFLICT (id) DO NOTHING;
@@ -908,6 +909,16 @@ COMMIT;
       const displayName = (p) => colorOf(p) ? `${String(p.name).trim()} - Color ${colorOf(p)}` : p.name;
       const modelRank = (m) => { const i = IPHONE_MODELS.indexOf(m); return i < 0 ? 999 : i; };
 
+      // Descuento de toda la tienda: se calcula al mostrar, sin cambiar los precios guardados.
+      // Si un producto ya tiene una oferta mejor, se queda con esa (no se suman).
+      const withStoreDiscount = (p, percent) => {
+        const d = Number(percent) || 0;
+        if (!(d > 0)) return p;
+        const normal = p.on_sale && Number(p.original_price) > Number(p.price) ? Number(p.original_price) : Number(p.price);
+        const price = Math.round(normal * (100 - d) / 100);
+        return price < Number(p.price) ? { ...p, price, original_price: normal, on_sale: true } : p;
+      };
+
       // Sube las fotos nuevas a Storage; en la base de datos solo queda el enlace
       const uploadPhotos = async (client, folder, images) => {
         const out = [];
@@ -986,6 +997,7 @@ COMMIT;
         const [orderEdit, setOrderEdit] = useState(null); // copia del pedido que se está editando
         const [addSearch, setAddSearch] = useState('');
         const [productSearch, setProductSearch] = useState('');
+        const [discountDraft, setDiscountDraft] = useState('');
         const savingSplit = React.useRef(false);
         // Evita guardar el mismo producto varias veces por tocar Guardar mientras sube las fotos
         const savingForm = React.useRef(false);
@@ -1050,6 +1062,10 @@ COMMIT;
             const res = await client.from('products').select('*');
             if (res.error) throw new Error(res.error.message);
             const list = (res.data || []).map(({ cost, ...rest }) => rest);
+            try {
+              const { data: cfg } = await client.from('store_settings').select('store_discount').single();
+              if (cfg && cfg.store_discount !== undefined) setSettings(prev => ({ ...prev, store_discount: cfg.store_discount }));
+            } catch {}
             try { localStorage.setItem(CATALOG_KEY, JSON.stringify(list)); } catch {}
             // Los costos solo se piden con sesión de administrador
             let byId = new Map();
@@ -1236,8 +1252,11 @@ COMMIT;
           await fetchProductsFromClient(supabaseClient);
         };
 
+        const storeDiscount = Number(settings.store_discount) || 0;
+        const shopProducts = useMemo(() => products.map(p => withStoreDiscount(p, storeDiscount)), [products, storeDiscount]);
+
         const filteredProducts = useMemo(() => {
-          return products.filter(p => {
+          return shopProducts.filter(p => {
             if (!p.active) return false;
             const matchCat = selectedCategory === 'all' || p.category === selectedCategory;
             if (selectedCategory === 'covers' && ((coverModel && phoneModelOf(p) !== coverModel) || (coverColor && p.color !== coverColor))) return false;
@@ -1245,7 +1264,7 @@ COMMIT;
             const matchSale = onlyOnSale ? p.on_sale : true;
             return matchCat && matchSearch && matchSale;
           });
-        }, [products, selectedCategory, searchQuery, onlyOnSale, coverModel, coverColor]);
+        }, [shopProducts, selectedCategory, searchQuery, onlyOnSale, coverModel, coverColor]);
 
         const covers = products.filter(p => p.active && p.category === 'covers');
         const coverModels = [...new Set(covers.map(phoneModelOf).filter(Boolean))].sort((a, b) => modelRank(a) - modelRank(b));
@@ -1268,12 +1287,12 @@ COMMIT;
         // Mantiene los precios del carrito iguales a los del catálogo
         useEffect(() => {
           setCart(prev => prev.map(i => {
-            const live = products.find(p => p.id === i.product.id);
+            const live = shopProducts.find(p => p.id === i.product.id);
             if (!live) return i;
             const { cost, ...publicProduct } = live;
             return { ...i, product: publicProduct };
           }));
-        }, [products]);
+        }, [shopProducts]);
 
         const cartTotal = cart.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
         const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
@@ -1546,7 +1565,7 @@ COMMIT;
           setTimeout(() => {
             const response = runBcoMiniAI({
               query: q,
-              products,
+              products: shopProducts,
               categories,
               orders: [], // el chat público nunca ve pedidos
               settings,
@@ -1638,6 +1657,21 @@ COMMIT;
           showToast('Producto guardado');
         };
 
+        const saveStoreDiscount = async (percent) => {
+          if (!supabaseClient) return showToast('Sin conexión: no se guardó');
+          if (percent !== 0) {
+            if (!(percent >= 1 && percent <= 90)) return showToast('Escribe un porcentaje entre 1 y 90');
+            const losing = products.filter(p => p.active && Number(p.cost) > 0 && withStoreDiscount(p, percent).price < Number(p.cost)).length;
+            const warning = losing ? `\n\nOJO: ${losing} producto(s) quedarían por debajo de lo que te costaron.` : '';
+            if (!window.confirm(`¿Aplicar ${percent}% de descuento a toda la tienda?${warning}`)) return;
+          }
+          const { data, error } = await supabaseClient.from('store_settings').upsert([{ id: 1, store_discount: percent }]).select('id');
+          if (error || !data?.length) return showToast(`No se guardó${error ? `: ${error.message}` : ': vuelve a entrar a Admin'}`);
+          setSettings(prev => ({ ...prev, store_discount: percent }));
+          setDiscountDraft('');
+          showToast(percent ? `Descuento de ${percent}% aplicado a toda la tienda` : 'Descuento de la tienda quitado');
+        };
+
         const applyOffer = async (p) => {
           const normalPrice = Number(p.on_sale && p.original_price ? p.original_price : p.price);
           const offerPrice = Number(offerDrafts[p.id]);
@@ -1701,10 +1735,10 @@ COMMIT;
             whatsapp: String(settingsDraft.whatsapp || '').replace(/\D/g, '') || '18098435918',
             invoice_whatsapp: String(settingsDraft.invoice_whatsapp || '').replace(/\D/g, '')
           };
-          const { updated_at, ...row } = cleanSettings;
+          const { updated_at, store_discount, ...row } = cleanSettings;
           const { error } = await supabaseClient.from('store_settings').upsert([{ ...row, id: 1 }]);
           if (error) return showToast(`No se guardó: ${error.message}`);
-          setSettings({ ...cleanSettings, hero_image: DEFAULT_SETTINGS.hero_image });
+          setSettings(prev => ({ ...cleanSettings, hero_image: DEFAULT_SETTINGS.hero_image, store_discount: prev.store_discount }));
           showToast('Ajustes guardados');
         };
 
@@ -1820,6 +1854,10 @@ COMMIT;
                       </button>
                     ))}
                   </div>
+
+                  {storeDiscount > 0 && (
+                    <p data-testid="aviso-descuento" className="text-center text-sm font-black uppercase py-3 px-4 rounded-2xl bg-[#8CFF00] text-black">{storeDiscount}% de descuento en toda la tienda</p>
+                  )}
 
                   {selectedCategory === 'covers' && coverModels.length > 0 && (
                     <div data-testid="submenu-covers" className="space-y-3 p-3 rounded-2xl border border-gray-200 dark:border-gray-800">
@@ -2228,6 +2266,19 @@ COMMIT;
                       <h2 className="font-display font-bold uppercase">Ofertas</h2>
                       <p className="text-gray-400 mt-0.5">Escribe el precio rebajado y pulsa Aplicar. Al quitar la oferta vuelve el precio normal.</p>
                     </div>
+                    <div data-testid="descuento-tienda" className="p-4 rounded-2xl bg-[#0A0D14] text-gray-100 border border-[#8CFF00]/60 space-y-3">
+                      <p className="font-bold text-sm">Descuento en toda la tienda</p>
+                      <p className="text-gray-400">{storeDiscount > 0
+                        ? <>Activo: <span className="text-[#8CFF00] font-bold">{storeDiscount}% en todos los productos</span></>
+                        : 'Sin descuento general ahora mismo.'}</p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <input type="number" min="1" max="90" step="1" inputMode="numeric" aria-label="Porcentaje de descuento" placeholder="% ej. 10" value={discountDraft} onChange={e => setDiscountDraft(e.target.value)} className="w-28 bg-[#121824] text-gray-100 border border-gray-700 rounded-xl px-3 py-2 text-base sm:text-xs" />
+                        <button type="button" onClick={() => saveStoreDiscount(Number(discountDraft))} className="px-3 py-2 rounded-xl bg-[#8CFF00] text-black font-bold">Aplicar a todo</button>
+                        {storeDiscount > 0 && <button type="button" onClick={() => saveStoreDiscount(0)} className="px-3 py-2 rounded-xl bg-red-500/15 text-red-400 font-bold">Quitar descuento</button>}
+                      </div>
+                      <p className="text-gray-400">Tus precios guardados no cambian. Si un producto ya tiene una oferta más barata, se queda con esa.</p>
+                    </div>
+                    <p className="font-bold uppercase text-gray-400">Ofertas por producto</p>
                     <div className="divide-y divide-gray-800">
                       {products.map(p => (
                         <div key={p.id} className="py-3 flex flex-wrap items-center justify-between gap-3">
@@ -2237,6 +2288,7 @@ COMMIT;
                               {p.on_sale
                                 ? <>En oferta: <span className="text-[#8CFF00] font-bold">RD${Number(p.price).toFixed(2)}</span>{p.original_price ? <> (antes RD${Number(p.original_price).toFixed(2)})</> : null}</>
                                 : <>Precio normal: RD${Number(p.price).toFixed(2)}</>}
+                              {withStoreDiscount(p, storeDiscount).price < Number(p.price) && <span className="block text-[#8CFF00]">En la tienda: RD${withStoreDiscount(p, storeDiscount).price.toFixed(2)}</span>}
                             </p>
                           </div>
                           <div className="flex items-center gap-2">
