@@ -1332,10 +1332,108 @@ COMMIT;
         const sendingRef = React.useRef(false);
         const [isSending, setIsSending] = useState(false);
 
-        // Generador de Factura PDF nativa sin dependencias externas
+        // PDF nativo sin dependencias externas
+        const pdfText = (s = '') => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7E]/g, ' ').replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+
+        const downloadPdf = (pages, filename) => {
+          const kids = pages.map((_, i) => `${5 + i * 2} 0 R`).join(' ');
+          const bodies = [
+            '<< /Type /Catalog /Pages 2 0 R >>',
+            `<< /Type /Pages /Kids [${kids}] /Count ${pages.length} >>`,
+            '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+            '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>'
+          ];
+          pages.forEach((content, i) => {
+            bodies.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents ${6 + i * 2} 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> >>`);
+            bodies.push(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
+          });
+          const objects = bodies.map((body, i) => `${i + 1} 0 obj\n${body}\nendobj\n`);
+          let pdf = '%PDF-1.4\n';
+          const offsets = [0];
+          objects.forEach(o => { offsets.push(pdf.length); pdf += o; });
+          const xref = pdf.length;
+          pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+          for (let i = 1; i <= objects.length; i++) pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+          pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+          const url = URL.createObjectURL(new Blob([pdf], { type: 'application/pdf' }));
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(() => URL.revokeObjectURL(url), 1500);
+        };
+
+        // Lista de productos con costo, venta y ganancia (solo administrador)
+        const exportProductsPdf = () => {
+          const money = (n) => Number(n).toFixed(2);
+          // Anchos de Helvetica para alinear los números a la derecha
+          const width = (t, size) => [...t].reduce((w, c) => w + (/[0-9$]/.test(c) ? 0.556 : /[., ]/.test(c) ? 0.278 : c === '-' ? 0.333 : 0.667), 0) * size;
+          const pages = [];
+          let lines = [], y = 0;
+          const text = (t, x, size = 8, bold = false, rgb = '0.1 0.1 0.1') =>
+            lines.push(`BT /${bold ? 'F2' : 'F1'} ${size} Tf ${rgb} rg 1 0 0 1 ${x.toFixed(1)} ${y} Tm (${pdfText(t)}) Tj ET`);
+          const right = (t, edge, size = 8, bold = false, rgb) => text(t, edge - width(t, size), size, bold, rgb);
+          const cols = { stock: 322, cost: 380, price: 440, gain: 500, total: 572 };
+          const header = () => {
+            y = 760; text('BCO TECH - LISTA DE PRODUCTOS', 40, 14, true);
+            y = 744; text(`${new Date().toLocaleString('es-DO')}  |  Montos en RD$  |  ${products.length} productos${storeDiscount > 0 ? `  |  Venta con ${storeDiscount}% de descuento` : ''}`, 40, 8);
+            y = 722;
+            lines.push(`q 0.9 0.92 0.96 rg 36 ${y - 5} 540 18 re f Q`);
+            text('PRODUCTO', 40, 8, true);
+            right('CANT.', cols.stock, 8, true); right('COSTO', cols.cost, 8, true); right('VENTA', cols.price, 8, true);
+            right('GANANCIA', cols.gain, 8, true); right('GAN. TOTAL', cols.total, 8, true);
+            y -= 18;
+          };
+          const need = (h) => { if (y - h < 40) { pages.push(lines.join('\n')); lines = []; header(); } };
+          header();
+
+          const sorted = [...products].sort((a, b) => categoryName(a.category).localeCompare(categoryName(b.category), 'es') || String(a.name).localeCompare(String(b.name), 'es'));
+          let category = null, units = 0, invested = 0, sales = 0, profit = 0, missing = 0;
+          sorted.forEach(p => {
+            if (p.category !== category) {
+              category = p.category;
+              need(40); y -= 4; text(String(categoryName(category) || 'Sin categoria').toUpperCase(), 40, 9, true, '0.0 0.2 1.0'); y -= 14;
+            }
+            const stock = Number(p.stock || 0);
+            const price = Number(withStoreDiscount(p, storeDiscount).price || 0);
+            const known = hasCost(p);
+            const gain = known ? price - Number(p.cost) : 0;
+            // El nombre se parte en dos líneas; color y estado nunca se recortan
+            const tag = `${colorOf(p) ? ` - ${colorOf(p)}` : ''}${p.active ? '' : ' (oculto)'}`;
+            const parts = [''];
+            `${String(p.name || '').trim().slice(0, 90 - tag.length)}${tag}`.split(/\s+/).forEach(word => {
+              const last = parts[parts.length - 1];
+              if (last && (last + ' ' + word).length > 48) parts.push(word); else parts[parts.length - 1] = last ? `${last} ${word}` : word;
+            });
+            need(parts.length * 10 + 4);
+            right(String(stock), cols.stock);
+            right(known ? money(p.cost) : '-', cols.cost);
+            right(money(price), cols.price);
+            const red = gain < 0 ? '0.8 0.0 0.0' : undefined;
+            right(known ? money(gain) : '-', cols.gain, 8, false, red);
+            right(known ? money(gain * stock) : '-', cols.total, 8, false, red);
+            parts.forEach(part => { text(part, 40); y -= 10; });
+            lines.push(`q 0.85 0.85 0.85 RG 0.5 w 36 ${y + 6} m 576 ${y + 6} l S Q`);
+            y -= 4;
+            units += stock;
+            if (known) { invested += Number(p.cost) * stock; sales += price * stock; profit += gain * stock; } else missing++;
+          });
+
+          need(90);
+          y -= 10; text('TOTALES SEGUN EXISTENCIAS', 40, 11, true);
+          [['Unidades', String(units)], ['Inversion (costo)', `RD$ ${money(invested)}`], ['Venta', `RD$ ${money(sales)}`], ['Ganancia', `RD$ ${money(profit)}`]]
+            .forEach(([label, value]) => { y -= 15; text(label, 40, 10); right(value, 300, 10, true); });
+          if (missing) { y -= 16; text(`${missing} producto(s) sin costo: no cuentan en inversion, venta ni ganancia.`, 40, 8, false, '0.8 0.0 0.0'); }
+          pages.push(lines.join('\n'));
+          downloadPdf(pages, 'Productos-BCO-Tech.pdf');
+        };
+
+        // Generador de Factura PDF
         const generateInvoicePDF = (order) => {
           try {
-            const esc = (s = '') => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7E]/g, ' ').replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+            const esc = pdfText;
             const lines = [];
             let y = 740;
             const pages = [];
@@ -1395,34 +1493,7 @@ COMMIT;
             addLine(`RD$${Number(order.total || 0).toFixed(2)}`, 14, true, '0.05 0.05 0.05', 475);
 
             pages.push(lines.join('\n'));
-            const kids = pages.map((_, i) => `${5 + i * 2} 0 R`).join(' ');
-            const bodies = [
-              '<< /Type /Catalog /Pages 2 0 R >>',
-              `<< /Type /Pages /Kids [${kids}] /Count ${pages.length} >>`,
-              '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
-              '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>'
-            ];
-            pages.forEach((content, i) => {
-              bodies.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents ${6 + i * 2} 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> >>`);
-              bodies.push(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
-            });
-            const objects = bodies.map((body, i) => `${i + 1} 0 obj\n${body}\nendobj\n`);
-            let pdf = '%PDF-1.4\n';
-            const offsets = [0];
-            objects.forEach(o => { offsets.push(pdf.length); pdf += o; });
-            const xref = pdf.length;
-            pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-            for (let i = 1; i <= objects.length; i++) pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
-            pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
-            const blob = new Blob([pdf], { type: 'application/pdf' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `Factura-BCO-Tech-${order.id}.pdf`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            setTimeout(() => URL.revokeObjectURL(url), 1500);
+            downloadPdf(pages, `Factura-BCO-Tech-${order.id}.pdf`);
           } catch {}
         };
 
@@ -2178,6 +2249,7 @@ COMMIT;
                                 Sincronizar
                               </button>
                             )}
+                            <button type="button" onClick={exportProductsPdf} disabled={!products.length} className="px-3 py-2 rounded-xl border border-[#8CFF00]/60 text-[#8CFF00] font-bold text-xs disabled:opacity-40">Exportar PDF</button>
                             <button onClick={() => setEditingProduct({ name: '', category: 'auriculares', cost: 0, price: 0, stock: 10, active: true, on_sale: false, description: '', images: [] })} className="bg-[#8CFF00] text-black font-bold px-4 py-2 rounded-xl text-xs uppercase flex items-center gap-1">
                               <PlusIcon className="h-4 w-4" /> Nuevo
                             </button>
