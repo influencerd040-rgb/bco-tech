@@ -1248,12 +1248,17 @@ COMMIT;
         const updateOrderStatus = async (id, status) => {
           const { error } = await supabaseClient.from('orders').update({ status }).eq('id', id);
           if (error) return showToast(`No se pudo cambiar el estado: ${error.message}`);
+          if (status === 'Entregado') showToast('Pedido entregado: pasó a Vendidos');
+          else if (orders.find(o => o.id === id)?.status === 'Entregado') showToast('El pedido volvió a Pedidos');
           await fetchOrdersFromClient(supabaseClient);
           await fetchProductsFromClient(supabaseClient);
         };
 
         const storeDiscount = Number(settings.store_discount) || 0;
         const shopProducts = useMemo(() => products.map(p => withStoreDiscount(p, storeDiscount)), [products, storeDiscount]);
+
+        // Los entregados viven en Vendidos; el resto en Pedidos
+        const shownOrders = orders.filter(o => (o.status === 'Entregado') === (adminTab === 'sold'));
 
         const filteredProducts = useMemo(() => {
           return shopProducts.filter(p => {
@@ -2213,7 +2218,8 @@ COMMIT;
                           { id: 'products', label: 'Productos' },
                           { id: 'inventory', label: 'Inventario' },
                     { id: 'offers', label: `Ofertas (${products.filter(p => p.on_sale).length})` },
-                    { id: 'orders', label: `Pedidos (${orders.length})` },
+                    { id: 'orders', label: `Pedidos (${orders.filter(o => o.status !== 'Entregado').length})` },
+                    { id: 'sold', label: `Vendidos (${orders.filter(o => o.status === 'Entregado').length})` },
                           { id: 'stats', label: 'Estadísticas' },
                           { id: 'settings', label: 'Ajustes' },
                           { id: 'supabase', label: 'Supabase' }
@@ -2375,11 +2381,11 @@ COMMIT;
                 )}
 
                 {/* Pestaña Pedidos */}
-                    {adminTab === 'orders' && (
+                    {(adminTab === 'orders' || adminTab === 'sold') && (
                       <div className="bg-white dark:bg-[#121824] p-6 rounded-3xl border border-gray-800 space-y-4 text-xs">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div>
-                            <h2 className="font-display font-bold uppercase">Pedidos ({orders.length})</h2>
+                            <h2 className="font-display font-bold uppercase">{adminTab === 'sold' ? 'Vendidos' : 'Pedidos'} ({shownOrders.length})</h2>
                             {ordersSyncMessage && <p className="text-[11px] text-gray-400 mt-0.5">{ordersSyncMessage}</p>}
                           </div>
                           {supabaseClient && (
@@ -2388,17 +2394,23 @@ COMMIT;
                             </button>
                           )}
                         </div>
-                        {supabaseClient && <OrderAlerts client={supabaseClient} showToast={showToast} />}
-                    {orders.some(o => ['Entregado', 'Cancelado'].includes(o.status)) && (
-                      <button type="button" onClick={() => { const done = orders.filter(o => ['Entregado', 'Cancelado'].includes(o.status)); deleteOrders(done, `¿Borrar ${done.length} pedido(s) entregados o cancelados?`); }} className="px-3 py-2 rounded-xl bg-red-500/15 text-red-400 font-bold flex items-center gap-1">
-                        <TrashIcon className="h-4 w-4" /> Borrar entregados y cancelados
+                        {adminTab === 'orders' && supabaseClient && <OrderAlerts client={supabaseClient} showToast={showToast} />}
+                        {adminTab === 'sold' && (
+                          <div data-testid="total-vendido" className="p-4 rounded-2xl bg-[#0A0D14] border border-[#8CFF00]/60">
+                            <p className="text-[11px] uppercase font-bold text-gray-400">Total vendido (entregados)</p>
+                            <p className="text-xl font-black font-display text-[#8CFF00]">RD${shownOrders.reduce((n, o) => n + Number(o.total || 0), 0).toFixed(2)}</p>
+                          </div>
+                        )}
+                    {adminTab === 'orders' && orders.some(o => o.status === 'Cancelado') && (
+                      <button type="button" onClick={() => { const done = orders.filter(o => o.status === 'Cancelado'); deleteOrders(done, `¿Borrar ${done.length} pedido(s) cancelados?`); }} className="px-3 py-2 rounded-xl bg-red-500/15 text-red-400 font-bold flex items-center gap-1">
+                        <TrashIcon className="h-4 w-4" /> Borrar cancelados
                       </button>
                     )}
-                    {orders.length === 0 ? (
-                          <p className="text-gray-400">No hay pedidos registrados aún.</p>
+                    {shownOrders.length === 0 ? (
+                          <p className="text-gray-400">{adminTab === 'sold' ? 'Aún no hay pedidos entregados.' : 'No hay pedidos pendientes.'}</p>
                         ) : (
                           <div className="space-y-3">
-                            {orders.map((o, idx) => (
+                            {shownOrders.map((o, idx) => (
                               <div key={o.id || o.order_number || idx} className="p-4 rounded-2xl bg-[#0A0D14] text-gray-100 border border-gray-800 space-y-3">
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <div>
