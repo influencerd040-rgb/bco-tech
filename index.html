@@ -71,7 +71,15 @@
       }
       /* Scroll especial: portada que se aleja; los productos crecen al deslizar (ver ScrollEffects) */
       .portada { scale: calc(1 - var(--portada, 0) * 0.1); opacity: calc(1 - var(--portada, 0) * 0.65); transform-origin: center bottom; }
+      /* Carrusel 3D de vidrio */
+      .carrusel-escena { position: relative; height: 23rem; perspective: 900px; transform-style: preserve-3d; touch-action: pan-y; cursor: grab; }
+      .carrusel-carta { position: absolute; top: 0.5rem; left: 50%; width: 13.25rem; overflow: hidden; border-radius: 1.25rem; cursor: pointer;
+        border: 1px solid rgba(255,255,255,0.18); background: rgba(18,24,36,0.78); box-shadow: 0 18px 40px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.14);
+        -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); transition: transform 650ms var(--panel), opacity 450ms ease; }
+      .carrusel-carta[data-posicion="0"] { border-color: rgba(140,255,0,0.55); }
+      html:not(.dark) .carrusel-carta { background: rgba(255,255,255,0.8); border-color: rgba(0,0,0,0.1); box-shadow: 0 14px 30px rgba(15,23,42,0.18); }
       @media (prefers-reduced-motion: reduce) {
+        .carrusel-carta { transition: opacity 200ms ease; }
         .portada { scale: 1; opacity: 1; }
         html { scroll-behavior: auto; }
         .hoja > *, .panel-carrito > *, .aviso, .tarjeta { animation: fundido 200ms ease; animation-delay: 0ms; }
@@ -912,6 +920,97 @@ COMMIT;
         }, [theme]);
 
         return <canvas ref={lienzo} data-testid="fondo-tech" aria-hidden="true" className="fixed inset-0 w-full h-full -z-10 pointer-events-none" />;
+      };
+
+      // Carrusel 3D de vidrio: la tarjeta del centro al frente y las demás inclinadas a los lados
+      const GlassCarousel = ({ items, onOpen, onAdd, paused }) => {
+        const total = items.length;
+        const [indice, setIndice] = useState(0);
+        const [tocando, setTocando] = useState(false);
+        const [aLaVista, setALaVista] = useState(true);
+        const caja = React.useRef(null);
+        const inicio = React.useRef(null);
+        const arrastro = React.useRef(false);
+        const actual = ((indice % total) + total) % total;
+
+        useEffect(() => {
+          if (!('IntersectionObserver' in window) || !caja.current) return;
+          const vigia = new IntersectionObserver(([e]) => setALaVista(e.isIntersecting), { threshold: 0.4 });
+          vigia.observe(caja.current);
+          return () => vigia.disconnect();
+        }, []);
+
+        // Avanza solo, salvo que lo estén tocando, no se vea o haya una ventana abierta
+        useEffect(() => {
+          if (paused || tocando || !aLaVista || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+          const reloj = setTimeout(() => setIndice(actual + 1), 2800);
+          return () => clearTimeout(reloj);
+        }, [actual, paused, tocando, aLaVista]);
+
+        const soltar = (x) => {
+          if (inicio.current === null) return;
+          const movido = x - inicio.current;
+          inicio.current = null;
+          setTocando(false);
+          if (Math.abs(movido) > 35) {
+            arrastro.current = true;
+            const pasos = Math.min(3, Math.max(1, Math.round(Math.abs(movido) / 110)));
+            setIndice(actual + (movido < 0 ? pasos : -pasos));
+          }
+        };
+
+        const centro = items[actual];
+        return (
+          <div ref={caja} data-testid="carrusel-3d" aria-roledescription="carrusel" className="-mx-3 sm:mx-0 overflow-hidden select-none">
+            <div
+              className="carrusel-escena"
+              onPointerDown={e => { inicio.current = e.clientX; arrastro.current = false; setTocando(true); }}
+              onPointerUp={e => soltar(e.clientX)}
+              onPointerCancel={() => { inicio.current = null; setTocando(false); }}
+              onPointerLeave={e => soltar(e.clientX)}
+            >
+              {items.map((prod, i) => {
+                let o = i - actual;
+                if (o > total / 2) o -= total;
+                if (o < -total / 2) o += total;
+                if (Math.abs(o) > 3) return null;
+                const lejos = Math.abs(o);
+                return (
+                  <div
+                    key={prod.id}
+                    data-testid="carta-3d"
+                    data-posicion={o}
+                    onClick={() => { if (arrastro.current) { arrastro.current = false; return; } o === 0 ? onOpen(prod) : setIndice(i); }}
+                    className="carrusel-carta"
+                    style={{
+                      transform: `translateX(-50%) translateX(${o * 56}%) translateZ(${-lejos * 110}px) rotateY(${-Math.sign(o) * Math.min(lejos, 2) * 17}deg)`,
+                      opacity: lejos > 2 ? 0 : 1 - lejos * 0.22,
+                      zIndex: 10 - lejos,
+                      pointerEvents: lejos > 2 ? 'none' : 'auto'
+                    }}
+                  >
+                    <img draggable="false" decoding="async" src={prod.images?.[0] || 'https://placehold.co/400x400/121824/8CFF00?text=BCO+Tech'} alt={prod.name} className="w-full aspect-square object-cover" />
+                    {prod.on_sale && <span className="absolute top-2 left-2 bg-[#0033FF] text-white text-[10px] font-black px-2.5 py-1 rounded-full">OFERTA</span>}
+                    <div className="p-3 space-y-1.5 text-left">
+                      <h3 className="font-bold text-xs line-clamp-2 min-h-[2rem] break-words">{prod.name}</h3>
+                      <p className="flex flex-wrap items-baseline gap-x-2">
+                        <span className="text-base font-black font-display">RD${Number(prod.price).toFixed(2)}</span>
+                        {prod.on_sale && prod.original_price && <span className="text-[11px] text-gray-400 line-through">RD${Number(prod.original_price).toFixed(2)}</span>}
+                      </p>
+                      <button type="button" tabIndex={o === 0 ? 0 : -1} onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); o === 0 ? onAdd(prod) : setIndice(i); }} className="w-full bg-[#8CFF00] text-black font-bold py-2 rounded-xl text-xs">Agregar</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mx-auto mt-2 w-fit max-w-[92%] flex items-center gap-2 rounded-full border border-gray-300 dark:border-white/15 bg-white/70 dark:bg-white/5 backdrop-blur-md p-1">
+              <button type="button" aria-label="Producto anterior" onClick={() => setIndice(actual - 1)} className="w-9 h-9 rounded-full text-lg font-black">‹</button>
+              <span className="text-[11px] font-bold truncate max-w-[11rem]">{centro.name}</span>
+              <span className="text-[10px] text-gray-400 shrink-0">{actual + 1}/{total}</span>
+              <button type="button" aria-label="Producto siguiente" onClick={() => setIndice(actual + 1)} className="w-9 h-9 rounded-full text-lg font-black">›</button>
+            </div>
+          </div>
+        );
       };
 
       // Efectos al deslizar la tienda: barra de avance, portada, productos que crecen (estilo Apple Watch) y botón para subir
@@ -2165,6 +2264,9 @@ COMMIT;
                   <p>{catalogStatus === 'loading' ? 'Cargando productos...' : catalogStatus === 'error' ? 'No se pudieron cargar los productos. Revisa tu internet.' : 'Todavía no hay productos.'}</p>
                   {catalogStatus === 'error' && <button type="button" onClick={() => fetchProductsFromClient(supabaseClient)} className="bg-[#8CFF00] text-black font-bold px-4 py-2 rounded-xl">Reintentar</button>}
                 </div>
+              )}
+              {selectedCategory === 'all' && !searchQuery && filteredProducts.length > 2 && (
+                <GlassCarousel items={filteredProducts} onOpen={setSelectedProduct} onAdd={p => addToCart(p, 1)} paused={Boolean(selectedProduct)} />
               )}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-6">
                     {filteredProducts.map(prod => (
