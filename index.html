@@ -75,11 +75,10 @@
       .carrusel-escena { position: relative; height: 23rem; perspective: 900px; transform-style: preserve-3d; touch-action: pan-y; cursor: grab; }
       .carrusel-carta { position: absolute; top: 0.5rem; left: 50%; width: 13.25rem; overflow: hidden; border-radius: 1.25rem; cursor: pointer;
         border: 1px solid rgba(255,255,255,0.18); background: rgba(18,24,36,0.78); box-shadow: 0 18px 40px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.14);
-        -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); transition: transform 650ms var(--panel), opacity 450ms ease; }
+        -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); will-change: transform; }
       .carrusel-carta[data-posicion="0"] { border-color: rgba(140,255,0,0.55); }
       html:not(.dark) .carrusel-carta { background: rgba(255,255,255,0.8); border-color: rgba(0,0,0,0.1); box-shadow: 0 14px 30px rgba(15,23,42,0.18); }
       @media (prefers-reduced-motion: reduce) {
-        .carrusel-carta { transition: opacity 200ms ease; }
         .portada { scale: 1; opacity: 1; }
         html { scroll-behavior: auto; }
         .hoja > *, .panel-carrito > *, .aviso, .tarjeta { animation: fundido 200ms ease; animation-delay: 0ms; }
@@ -925,13 +924,38 @@ COMMIT;
       // Carrusel 3D de vidrio: la tarjeta del centro al frente y las demás inclinadas a los lados
       const GlassCarousel = ({ items, onOpen, onAdd, paused }) => {
         const total = items.length;
-        const [indice, setIndice] = useState(0);
+        // Posición con decimales: así las tarjetas siguen el dedo y no saltan
+        const [pos, setPos] = useState(0);
         const [tocando, setTocando] = useState(false);
         const [aLaVista, setALaVista] = useState(true);
         const caja = React.useRef(null);
-        const inicio = React.useRef(null);
+        const posRef = React.useRef(0);
+        const cuadro = React.useRef(0);
+        const gesto = React.useRef(null);
         const arrastro = React.useRef(false);
-        const actual = ((indice % total) + total) % total;
+        const mod = (n) => ((n % total) + total) % total;
+        const actual = mod(Math.round(pos));
+        const quieto = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+        const poner = (p) => { posRef.current = p; setPos(p); };
+        const frenar = () => { cancelAnimationFrame(cuadro.current); cuadro.current = 0; };
+        const irA = (destino) => {
+          frenar();
+          const desde = posRef.current;
+          const duracion = quieto ? 0 : Math.min(900, 380 + Math.abs(destino - desde) * 120);
+          if (!duracion) return poner(destino);
+          const arranque = performance.now();
+          const paso = (ahora) => {
+            const t = Math.min(1, Math.max(0, (ahora - arranque) / duracion));
+            poner(desde + (destino - desde) * (1 - Math.pow(1 - t, 3)));
+            cuadro.current = t < 1 ? requestAnimationFrame(paso) : 0;
+          };
+          cuadro.current = requestAnimationFrame(paso);
+        };
+        const mover = (pasos) => irA(Math.round(posRef.current) + pasos);
+
+        useEffect(() => frenar, []);
+        useEffect(() => { frenar(); poner(0); }, [total]);
 
         useEffect(() => {
           if (!('IntersectionObserver' in window) || !caja.current) return;
@@ -942,21 +966,44 @@ COMMIT;
 
         // Avanza solo, salvo que lo estén tocando, no se vea o haya una ventana abierta
         useEffect(() => {
-          if (paused || tocando || !aLaVista || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-          const reloj = setTimeout(() => setIndice(actual + 1), 2800);
+          if (paused || tocando || !aLaVista || quieto) return;
+          const reloj = setTimeout(() => mover(1), 3200);
           return () => clearTimeout(reloj);
         }, [actual, paused, tocando, aLaVista]);
 
-        const soltar = (x) => {
-          if (inicio.current === null) return;
-          const movido = x - inicio.current;
-          inicio.current = null;
-          setTocando(false);
-          if (Math.abs(movido) > 35) {
+        const empezar = (e) => {
+          frenar();
+          arrastro.current = false;
+          gesto.current = { x: e.clientX, desde: posRef.current, muestras: [[e.clientX, e.timeStamp]] };
+          setTocando(true);
+        };
+        const seguir = (e) => {
+          const g = gesto.current;
+          if (!g) return;
+          const dx = e.clientX - g.x;
+          if (!arrastro.current) {
+            if (Math.abs(dx) < 6) return;
             arrastro.current = true;
-            const pasos = Math.min(3, Math.max(1, Math.round(Math.abs(movido) / 110)));
-            setIndice(actual + (movido < 0 ? pasos : -pasos));
+            try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
           }
+          g.muestras.push([e.clientX, e.timeStamp]);
+          while (g.muestras.length > 2 && e.timeStamp - g.muestras[0][1] > 100) g.muestras.shift();
+          poner(g.desde - dx / 130);
+        };
+        // Al soltar sigue con el impulso del dedo y se acomoda en una tarjeta
+        const soltar = (e) => {
+          const g = gesto.current;
+          if (!g) return;
+          gesto.current = null;
+          setTocando(false);
+          if (!arrastro.current) return irA(Math.round(posRef.current));
+          const [x0, t0] = g.muestras[0];
+          const velocidad = e.type === 'pointercancel' || e.timeStamp - t0 > 160 ? 0 : (e.clientX - x0) / Math.max(16, e.timeStamp - t0);
+          const inicio = Math.round(g.desde);
+          let destino = Math.round(posRef.current - velocidad * 1.6);
+          const dx = e.clientX - g.x;
+          if (destino === inicio && Math.abs(dx) > 30) destino = inicio + (dx < 0 ? 1 : -1);
+          irA(Math.max(inicio - 5, Math.min(inicio + 5, destino)));
         };
 
         const centro = items[actual];
@@ -964,29 +1011,30 @@ COMMIT;
           <div ref={caja} data-testid="carrusel-3d" aria-roledescription="carrusel" className="-mx-3 sm:mx-0 overflow-hidden select-none">
             <div
               className="carrusel-escena"
-              onPointerDown={e => { inicio.current = e.clientX; arrastro.current = false; setTocando(true); }}
-              onPointerUp={e => soltar(e.clientX)}
-              onPointerCancel={() => { inicio.current = null; setTocando(false); }}
-              onPointerLeave={e => soltar(e.clientX)}
+              onPointerDown={empezar}
+              onPointerMove={seguir}
+              onPointerUp={soltar}
+              onPointerCancel={soltar}
+              onPointerLeave={e => { if (!arrastro.current) soltar(e); }}
             >
               {items.map((prod, i) => {
-                let o = i - actual;
+                let o = mod(i - pos);
                 if (o > total / 2) o -= total;
-                if (o < -total / 2) o += total;
-                if (Math.abs(o) > 3) return null;
                 const lejos = Math.abs(o);
+                if (lejos > 3) return null;
+                const lugar = i === actual ? 0 : (Math.round(o) || Math.sign(o));
                 return (
                   <div
                     key={prod.id}
                     data-testid="carta-3d"
-                    data-posicion={o}
-                    onClick={() => { if (arrastro.current) { arrastro.current = false; return; } o === 0 ? onOpen(prod) : setIndice(i); }}
+                    data-posicion={lugar}
+                    onClick={() => { if (arrastro.current) return; lugar === 0 ? onOpen(prod) : irA(posRef.current + o); }}
                     className="carrusel-carta"
                     style={{
-                      transform: `translateX(-50%) translateX(${o * 56}%) translateZ(${-lejos * 110}px) rotateY(${-Math.sign(o) * Math.min(lejos, 2) * 17}deg)`,
-                      opacity: lejos > 2 ? 0 : 1 - lejos * 0.22,
-                      zIndex: 10 - lejos,
-                      pointerEvents: lejos > 2 ? 'none' : 'auto'
+                      transform: `translateX(-50%) translateX(${o * 56}%) translateZ(${-lejos * 110}px) rotateY(${-Math.max(-2, Math.min(2, o)) * 17}deg)`,
+                      opacity: lejos <= 2 ? 1 - lejos * 0.22 : Math.max(0, 0.56 * (3 - lejos)),
+                      zIndex: 100 - Math.round(lejos * 10),
+                      pointerEvents: lejos > 2.2 ? 'none' : 'auto'
                     }}
                   >
                     <img draggable="false" decoding="async" src={prod.images?.[0] || 'https://placehold.co/400x400/121824/8CFF00?text=BCO+Tech'} alt={prod.name} className="w-full aspect-square object-cover" />
@@ -997,17 +1045,17 @@ COMMIT;
                         <span className="text-base font-black font-display">RD${Number(prod.price).toFixed(2)}</span>
                         {prod.on_sale && prod.original_price && <span className="text-[11px] text-gray-400 line-through">RD${Number(prod.original_price).toFixed(2)}</span>}
                       </p>
-                      <button type="button" tabIndex={o === 0 ? 0 : -1} onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); o === 0 ? onAdd(prod) : setIndice(i); }} className="w-full bg-[#8CFF00] text-black font-bold py-2 rounded-xl text-xs">Agregar</button>
+                      <button type="button" tabIndex={lugar === 0 ? 0 : -1} onClick={e => { e.stopPropagation(); if (arrastro.current) return; lugar === 0 ? onAdd(prod) : irA(posRef.current + o); }} className="w-full bg-[#8CFF00] text-black font-bold py-2 rounded-xl text-xs">Agregar</button>
                     </div>
                   </div>
                 );
               })}
             </div>
             <div className="mx-auto mt-2 w-fit max-w-[92%] flex items-center gap-2 rounded-full border border-gray-300 dark:border-white/15 bg-white/70 dark:bg-white/5 backdrop-blur-md p-1">
-              <button type="button" aria-label="Producto anterior" onClick={() => setIndice(actual - 1)} className="w-9 h-9 rounded-full text-lg font-black">‹</button>
+              <button type="button" aria-label="Producto anterior" onClick={() => mover(-1)} className="w-9 h-9 rounded-full text-lg font-black">‹</button>
               <span className="text-[11px] font-bold truncate max-w-[11rem]">{centro.name}</span>
               <span className="text-[10px] text-gray-400 shrink-0">{actual + 1}/{total}</span>
-              <button type="button" aria-label="Producto siguiente" onClick={() => setIndice(actual + 1)} className="w-9 h-9 rounded-full text-lg font-black">›</button>
+              <button type="button" aria-label="Producto siguiente" onClick={() => mover(1)} className="w-9 h-9 rounded-full text-lg font-black">›</button>
             </div>
           </div>
         );
@@ -1631,7 +1679,7 @@ COMMIT;
         // PDF nativo sin dependencias externas
         const pdfText = (s = '') => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7E]/g, ' ').replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
 
-        const downloadPdf = (pages, filename) => {
+        const buildPdf = (pages) => {
           const kids = pages.map((_, i) => `${5 + i * 2} 0 R`).join(' ');
           const bodies = [
             '<< /Type /Catalog /Pages 2 0 R >>',
@@ -1651,7 +1699,11 @@ COMMIT;
           pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
           for (let i = 1; i <= objects.length; i++) pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
           pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
-          const url = URL.createObjectURL(new Blob([pdf], { type: 'application/pdf' }));
+          return new Blob([pdf], { type: 'application/pdf' });
+        };
+
+        const downloadPdf = (pages, filename) => {
+          const url = URL.createObjectURL(buildPdf(pages));
           const a = document.createElement('a');
           a.href = url;
           a.download = filename;
@@ -1659,6 +1711,80 @@ COMMIT;
           a.click();
           document.body.removeChild(a);
           setTimeout(() => URL.revokeObjectURL(url), 1500);
+        };
+
+        // PDF con los pedidos pendientes (sin costos), para enviarlo al grupo de trabajo
+        const pendingOrders = () => orders.filter(o => o.status !== 'Entregado' && o.status !== 'Cancelado');
+
+        const ordersPdfPages = (list) => {
+          const pay = { efectivo: 'Efectivo contra entrega', transferencia: 'Transferencia bancaria', tarjeta: 'Tarjeta / Link de pago' };
+          const money = (n) => `RD$${Number(n || 0).toFixed(2)}`;
+          const pages = [];
+          let lines = [], y = 760;
+          const text = (t, x, size = 10, bold = false, rgb = '0.1 0.1 0.1') =>
+            lines.push(`BT /${bold ? 'F2' : 'F1'} ${size} Tf ${rgb} rg 1 0 0 1 ${x} ${y} Tm (${pdfText(t)}) Tj ET`);
+          const need = (h) => { if (y - h < 40) { pages.push(lines.join('\n')); lines = []; y = 760; } };
+          // Parte los textos largos (direcciones, notas) en varias líneas sin cortar nada
+          const wrap = (value, x = 40, size = 10, bold = false) => {
+            const max = Math.floor((572 - x) / (size * 0.56));
+            String(value).split(/\r?\n/).forEach(paragraph => {
+              let line = '';
+              const flush = () => { if (!line) return; need(14); text(line, x, size, bold); y -= 14; line = ''; };
+              paragraph.split(/\s+/).filter(Boolean).forEach(word => {
+                for (let i = 0; i < word.length; i += max) {
+                  const piece = word.slice(i, i + max);
+                  if (line && line.length + piece.length + 1 > max) flush();
+                  line = line ? `${line} ${piece}` : piece;
+                }
+              });
+              flush();
+            });
+          };
+
+          text('BCO TECH - PEDIDOS PENDIENTES', 40, 15, true); y -= 16;
+          text(`${new Date().toLocaleString('es-DO')}  |  ${list.length} pedido(s)  |  Total ${money(list.reduce((n, o) => n + Number(o.total || 0), 0))}`, 40, 9); y -= 22;
+          list.forEach((o, index) => {
+            need(110);
+            lines.push(`q 0.9 0.92 0.96 rg 36 ${y - 5} 540 19 re f Q`);
+            text(`${index + 1}. ${o.id}  -  ${o.status || 'Nuevo'}${o.created_at ? `  -  ${new Date(o.created_at).toLocaleDateString('es-DO')}` : ''}`, 40, 10, true); y -= 20;
+            wrap(`Cliente: ${o.customer_name || '-'}    Tel: ${o.phone || '-'}`);
+            wrap(`Direccion: ${o.address || '-'}`);
+            wrap(`Pago: ${pay[o.payment_method] || o.payment_method || '-'}`);
+            (Array.isArray(o.items) ? o.items : []).forEach(item => {
+              const qty = Number(item.quantity || 1);
+              const p = item.product || {};
+              const stored = products.find(x => x.id === p.id);
+              const color = colorOf(p) || (stored ? colorOf(stored) : '');
+              const price = Number(p.price || 0);
+              wrap(`${qty} x ${p.name || 'Articulo'}${color ? ` (${color})` : ''}${price ? `  -  ${money(price * qty)}` : ''}`, 52);
+            });
+            if (o.notes) wrap(`Notas: ${o.notes}`);
+            need(16); text(`TOTAL: ${money(o.total)}`, 40, 11, true); y -= 26;
+          });
+          pages.push(lines.join('\n'));
+          return pages;
+        };
+
+        const ordersFileName = () => `pedidos-bco-tech-${new Date().toLocaleDateString('en-CA')}.pdf`;
+
+        const exportOrdersPdf = () => {
+          const list = pendingOrders();
+          if (!list.length) return showToast('No hay pedidos pendientes para exportar.');
+          downloadPdf(ordersPdfPages(list), ordersFileName());
+        };
+
+        // Abre el menú de compartir del teléfono con el PDF; ahí se elige WhatsApp y el grupo
+        const shareOrdersPdf = async () => {
+          const list = pendingOrders();
+          if (!list.length) return showToast('No hay pedidos pendientes para enviar.');
+          const pages = ordersPdfPages(list);
+          const file = new File([buildPdf(pages)], ordersFileName(), { type: 'application/pdf' });
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            try { await navigator.share({ files: [file], title: 'Pedidos BCO Tech' }); return; }
+            catch (err) { if (err.name === 'AbortError') return; }
+          }
+          downloadPdf(pages, ordersFileName());
+          showToast('PDF descargado. Adjúntalo en tu grupo de WhatsApp.');
         };
 
         // Lista de productos con costo, venta y ganancia (solo administrador)
@@ -2265,9 +2391,9 @@ COMMIT;
                   {catalogStatus === 'error' && <button type="button" onClick={() => fetchProductsFromClient(supabaseClient)} className="bg-[#8CFF00] text-black font-bold px-4 py-2 rounded-xl">Reintentar</button>}
                 </div>
               )}
-              {selectedCategory === 'all' && !searchQuery && filteredProducts.length > 2 && (
+              {selectedCategory === 'all' && !searchQuery && filteredProducts.length > 2 ? (
                 <GlassCarousel items={filteredProducts} onOpen={setSelectedProduct} onAdd={p => addToCart(p, 1)} paused={Boolean(selectedProduct)} />
-              )}
+              ) : (
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-6">
                     {filteredProducts.map(prod => (
                       <div key={prod.id} className="bg-white dark:bg-[#121824] min-w-0 rounded-2xl sm:rounded-3xl border sm:border-2 border-gray-200 dark:border-gray-800 hover:border-[#8CFF00] tarjeta transition-colors overflow-hidden flex flex-col justify-between">
@@ -2297,6 +2423,7 @@ COMMIT;
                       </div>
                     ))}
                   </div>
+              )}
                 </section>
 
                 {/* Botones flotantes de contacto, IA, Pedido Especial y Personalizados */}
@@ -2692,6 +2819,15 @@ COMMIT;
                           )}
                         </div>
                         {adminTab === 'orders' && supabaseClient && <OrderAlerts client={supabaseClient} showToast={showToast} />}
+                        {adminTab === 'orders' && (
+                          <div data-testid="pdf-pedidos" className="space-y-1.5">
+                            <div className="grid grid-cols-2 gap-2">
+                              <button type="button" onClick={shareOrdersPdf} className="py-3 rounded-xl bg-green-600 text-white font-bold flex items-center justify-center gap-1.5"><WhatsAppIcon className="h-4 w-4" /> Enviar por WhatsApp</button>
+                              <button type="button" onClick={exportOrdersPdf} className="py-3 rounded-xl bg-gray-800 text-gray-100 font-bold">Exportar PDF</button>
+                            </div>
+                            <p className="text-[11px] text-gray-400">Incluye los pedidos pendientes (sin entregados ni cancelados), con nombre, teléfono y dirección del cliente.</p>
+                          </div>
+                        )}
                         {adminTab === 'sold' && (
                           <div data-testid="total-vendido" className="p-4 rounded-2xl bg-[#0A0D14] border border-[#8CFF00]/60">
                             <p className="text-[11px] uppercase font-bold text-gray-400">Total vendido (entregados)</p>
