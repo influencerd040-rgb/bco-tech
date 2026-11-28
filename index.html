@@ -820,6 +820,100 @@ COMMIT;
         );
       };
 
+      // Fondo de circuitos detrás de los productos: se mueve y lanza pulsos de luz al deslizar
+      const TechBackground = ({ theme }) => {
+        const lienzo = React.useRef(null);
+
+        useEffect(() => {
+          const canvas = lienzo.current;
+          const ctx = canvas?.getContext('2d');
+          if (!ctx) return;
+          const quieto = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+          const oscuro = theme === 'dark';
+          let ancho = 0, alto = 0, bloque = 0, pistas = [], cuadro = 0;
+          // Números "al azar" que siempre salen iguales, para que el dibujo no cambie solo
+          let semilla = 7;
+          const azar = () => (semilla = (semilla * 16807) % 2147483647) / 2147483647;
+
+          const crear = () => {
+            semilla = 7;
+            bloque = Math.max(700, alto);
+            const total = Math.round(Math.min(34, Math.max(14, ancho / 40)));
+            pistas = Array.from({ length: total }, (_, i) => {
+              let x = ((i + azar()) / total) * ancho;
+              let y = azar() * bloque;
+              const puntos = [[x, y]];
+              let largo = 0;
+              for (let paso = 0; paso < 4; paso++) {
+                const recto = 40 + azar() * 110;
+                const lado = (azar() < 0.5 ? -1 : 1) * (18 + azar() * 40);
+                puntos.push([x, y += recto]);
+                puntos.push([x += lado, y += Math.abs(lado)]);
+                largo += recto + Math.abs(lado) * 1.414;
+              }
+              return { puntos, largo, fase: azar() * 900, azul: i % 3 === 0 };
+            });
+          };
+
+          const trazar = (puntos, dy) => {
+            ctx.beginPath();
+            puntos.forEach(([x, y], i) => i ? ctx.lineTo(x, y + dy) : ctx.moveTo(x, y + dy));
+            ctx.stroke();
+          };
+
+          const dibujar = () => {
+            cuadro = 0;
+            const y = quieto ? 0 : window.scrollY;
+            ctx.clearRect(0, 0, ancho, alto);
+            const corrido = -((y * 0.45) % bloque);
+            for (let dy = corrido - bloque; dy < alto; dy += bloque) {
+              pistas.forEach(p => {
+                const color = p.azul ? (oscuro ? '61,110,255' : '0,51,255') : (oscuro ? '140,255,0' : '70,150,0');
+                ctx.setLineDash([]);
+                ctx.lineWidth = 1.2;
+                ctx.strokeStyle = `rgba(${color},${oscuro ? 0.22 : 0.18})`;
+                trazar(p.puntos, dy);
+                ctx.fillStyle = `rgba(${color},0.55)`;
+                [p.puntos[0], p.puntos[p.puntos.length - 1]].forEach(([px, py]) => {
+                  ctx.beginPath(); ctx.arc(px, py + dy, 2.6, 0, Math.PI * 2); ctx.fill();
+                });
+                if (quieto) return;
+                // Pulso de luz que avanza por la pista según lo que se ha deslizado
+                const ciclo = p.largo + 160;
+                ctx.setLineDash([46, ciclo]);
+                ctx.lineDashOffset = 46 - ((y * 0.9 + p.fase) % ciclo);
+                ctx.lineWidth = 6; ctx.strokeStyle = `rgba(${color},0.2)`; trazar(p.puntos, dy);
+                ctx.lineWidth = 2; ctx.strokeStyle = `rgba(${color},0.95)`; trazar(p.puntos, dy);
+              });
+            }
+          };
+
+          const pedir = () => { if (!cuadro) cuadro = requestAnimationFrame(dibujar); };
+          const ajustar = () => {
+            const nuevoAncho = canvas.clientWidth, nuevoAlto = canvas.clientHeight;
+            const nitidez = Math.min(2, window.devicePixelRatio || 1);
+            canvas.width = nuevoAncho * nitidez;
+            canvas.height = nuevoAlto * nitidez;
+            ctx.setTransform(nitidez, 0, 0, nitidez, 0, 0);
+            // La barra del navegador cambia el alto al deslizar: no rehacer el dibujo por eso
+            const rehacer = nuevoAncho !== ancho;
+            ancho = nuevoAncho; alto = nuevoAlto;
+            if (rehacer) crear();
+            pedir();
+          };
+          ajustar();
+          window.addEventListener('resize', ajustar);
+          if (!quieto) window.addEventListener('scroll', pedir, { passive: true });
+          return () => {
+            window.removeEventListener('resize', ajustar);
+            window.removeEventListener('scroll', pedir);
+            cancelAnimationFrame(cuadro);
+          };
+        }, [theme]);
+
+        return <canvas ref={lienzo} data-testid="fondo-tech" aria-hidden="true" className="fixed inset-0 w-full h-full -z-10 pointer-events-none" />;
+      };
+
       // Efectos al deslizar la tienda: barra de avance, portada, productos que crecen (estilo Apple Watch) y botón para subir
       const ScrollEffects = () => {
         const barra = React.useRef(null);
@@ -1933,7 +2027,7 @@ COMMIT;
         };
 
         return (
-          <div className={`min-h-screen transition-colors ${theme === 'dark' ? 'bg-[#0A0D14] text-gray-100' : 'bg-gray-50 text-gray-900'}`}>
+          <div className={`relative isolate min-h-screen transition-colors ${theme === 'dark' ? 'bg-[#0A0D14] text-gray-100' : 'bg-gray-50 text-gray-900'}`}>
             {toastMessage && (
               <div className="aviso fixed top-3 sm:top-auto sm:bottom-6 left-3 right-3 sm:left-auto sm:right-6 z-[60] text-center pointer-events-none bg-black text-[#8CFF00] border-2 border-[#8CFF00] px-4 py-2.5 rounded-2xl shadow-2xl text-xs font-bold">
                 {toastMessage}
@@ -1941,6 +2035,7 @@ COMMIT;
             )}
 
             {currentView === 'shop' && <ScrollEffects />}
+            {currentView === 'shop' && <TechBackground theme={theme} />}
 
             {/* Barra de navegación superior */}
             <header className="sticky top-0 z-40 backdrop-blur-xl border-b transition-colors bg-opacity-90 bg-white/80 dark:bg-[#0A0D14]/90 border-gray-200 dark:border-gray-800">
