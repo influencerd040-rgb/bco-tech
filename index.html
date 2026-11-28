@@ -71,6 +71,15 @@
       }
       /* Scroll especial: portada que se aleja; los productos crecen al deslizar (ver ScrollEffects) */
       .portada { scale: calc(1 - var(--portada, 0) * 0.1); opacity: calc(1 - var(--portada, 0) * 0.65); transform-origin: center bottom; }
+      /* Robot de sugerencias */
+      @keyframes flotar { 50% { translate: 0 -5px; } }
+      @keyframes parpadeo { 0%, 92%, 100% { transform: scaleY(1); } 96% { transform: scaleY(0.1); } }
+      @keyframes latido { 50% { opacity: 0.25; } }
+      .robot { animation: flotar 2.8s ease-in-out infinite; }
+      .robot-ojos { transform-origin: 32px 28px; animation: parpadeo 4s infinite; }
+      .robot-luz { animation: latido 1.4s ease-in-out infinite; }
+      @media (prefers-reduced-motion: reduce) { .robot, .robot-ojos, .robot-luz { animation: none; } }
+
       /* Carrusel 3D de vidrio */
       .carrusel-escena { position: relative; height: 23rem; perspective: 900px; transform-style: preserve-3d; touch-action: pan-y; cursor: grab; }
       .carrusel-carta { position: absolute; top: 0.5rem; left: 50%; width: 13.25rem; overflow: hidden; border-radius: 1.25rem; cursor: pointer;
@@ -1058,6 +1067,62 @@ COMMIT;
               <button type="button" aria-label="Producto siguiente" onClick={() => mover(1)} className="w-9 h-9 rounded-full text-lg font-black">›</button>
             </div>
           </div>
+        );
+      };
+
+      // Robot que recomienda los 5 productos de mayor precio, en miniatura
+      const RobotSugiere = ({ products, onOpen, paused }) => {
+        const top = useMemo(() => {
+          const vistos = new Set(); // un mismo producto en varios colores cuenta una sola vez
+          return products.filter(p => p.active && Number(p.price) > 0)
+            .sort((a, b) => Number(b.price) - Number(a.price))
+            .filter(p => { const n = String(p.name).trim().toLowerCase(); return vistos.has(n) ? false : vistos.add(n); })
+            .slice(0, 5);
+        }, [products]);
+        const [turno, setTurno] = useState(0);
+
+        useEffect(() => {
+          if (paused || top.length < 2) return;
+          const reloj = setTimeout(() => setTurno(turno + 1), 3000);
+          return () => clearTimeout(reloj);
+        }, [turno, paused, top.length]);
+
+        if (!top.length) return null;
+        const actual = turno % top.length;
+        const elegido = top[actual];
+        const frases = ['Te recomiendo este', 'Mira esta joya', 'De lo mejor de la tienda', 'Para darte un gusto', 'Calidad que vale la pena'];
+
+        return (
+          <section data-testid="robot-sugiere" aria-label="Sugerencias del robot" className="rounded-3xl border border-gray-200 dark:border-white/15 bg-white/85 dark:bg-[#121824]/85 backdrop-blur-md p-3 sm:p-5 space-y-3">
+            <div className="flex items-center gap-3">
+              <svg viewBox="0 0 64 72" className="robot w-14 h-16 shrink-0" aria-hidden="true">
+                <line x1="32" y1="4" x2="32" y2="14" stroke="#8CFF00" strokeWidth="3" strokeLinecap="round" />
+                <circle className="robot-luz" cx="32" cy="5" r="4" fill="#8CFF00" />
+                <rect x="10" y="13" width="44" height="32" rx="14" fill="#0033FF" />
+                <rect x="16" y="19" width="32" height="20" rx="9" fill="#05070C" />
+                <g className="robot-ojos" fill="#8CFF00"><circle cx="25" cy="28" r="3.5" /><circle cx="39" cy="28" r="3.5" /></g>
+                <path d="M27 34 q5 3.5 10 0" fill="none" stroke="#8CFF00" strokeWidth="2" strokeLinecap="round" />
+                <rect x="19" y="49" width="26" height="18" rx="8" fill="#0033FF" />
+                <circle cx="32" cy="58" r="4" fill="#8CFF00" />
+              </svg>
+              <button type="button" onClick={() => onOpen(elegido)} className="relative flex-1 min-w-0 text-left rounded-2xl border border-[#8CFF00]/60 bg-gray-50 dark:bg-[#0A0D14] px-3 py-2">
+                <span className="absolute -left-1.5 top-1/2 -mt-1.5 w-3 h-3 rotate-45 border-l border-b border-[#8CFF00]/60 bg-gray-50 dark:bg-[#0A0D14]" />
+                <span key={elegido.id} className="aviso block">
+                  <span className="block text-[11px] font-bold text-gray-500 dark:text-gray-400">{frases[actual]}:</span>
+                  <span className="block text-xs font-bold truncate">{elegido.name}</span>
+                  <span className="block text-sm font-black font-display">RD${Number(elegido.price).toFixed(2)}</span>
+                </span>
+              </button>
+            </div>
+            <div className="grid grid-cols-5 gap-2 max-w-md mx-auto">
+              {top.map((p, i) => (
+                <button type="button" key={p.id} data-testid="miniatura-robot" aria-label={`${p.name}, RD$${Number(p.price).toFixed(2)}`} onClick={() => { setTurno(i); onOpen(p); }} className="min-w-0 space-y-1">
+                  <img loading="lazy" decoding="async" src={p.images?.[0] || 'https://placehold.co/120x120/121824/8CFF00?text=BCO'} alt="" className={`w-full aspect-square object-cover rounded-xl border-2 ${i === actual ? 'border-[#8CFF00]' : 'border-transparent'}`} />
+                  <span className="block text-[10px] font-bold truncate">RD${Math.round(Number(p.price)).toLocaleString('en-US')}</span>
+                </button>
+              ))}
+            </div>
+          </section>
         );
       };
 
@@ -2315,27 +2380,8 @@ COMMIT;
 
             {currentView === 'shop' ? (
               <main className="max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-8 space-y-5 sm:space-y-10">
-                {/* Banner principal */}
-                <section className="portada rounded-3xl overflow-hidden border-2 border-gray-800 bg-gradient-to-r from-black via-[#0A0D14] to-[#001133] p-3 sm:p-12 flex flex-col-reverse lg:flex-row items-center justify-between gap-3 sm:gap-8">
-                  <div className="space-y-2.5 sm:space-y-5 text-center lg:text-left flex-1">
-                    <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#8CFF00]/15 border border-[#8CFF00]/40 text-[#8CFF00] text-xs font-bold uppercase">
-                      <SparklesIcon className="h-3.5 w-3.5" /> BCO Tech Oficial
-                    </span>
-                    <h1 className="text-xl sm:text-5xl font-black font-display text-white leading-tight">{settings.hero_title}</h1>
-                    <p className="text-gray-300 text-xs sm:text-sm max-w-xl mx-auto lg:mx-0">{settings.hero_subtitle}</p>
-                    <div className="flex flex-wrap justify-center lg:justify-start gap-3">
-                      <a href="#catalogo" className="bg-[#8CFF00] text-black font-extrabold px-6 py-3 rounded-2xl text-xs uppercase font-display inline-flex items-center gap-1">
-                        Ver Catálogo <ChevronRightIcon className="h-4 w-4" />
-                      </a>
-                      <button onClick={() => setOnlyOnSale(!onlyOnSale)} className={`px-5 py-3 rounded-2xl text-xs font-bold border inline-flex items-center gap-1.5 ${onlyOnSale ? 'bg-[#0033FF] text-white border-[#0033FF]' : 'border-white/25 text-white'}`}>
-                        <TagIcon className="h-4 w-4 text-[#8CFF00]" /> Ofertas
-                      </button>
-                    </div>
-                  </div>
-                  <div className="w-full min-w-0 lg:w-1/2">
-                    <HeroCarousel images={heroImagesOf(settings)} />
-                  </div>
-                </section>
+                <h1 className="sr-only">BCO Tech</h1>
+                {!searchQuery && <RobotSugiere products={shopProducts} onOpen={setSelectedProduct} paused={Boolean(selectedProduct)} />}
 
                 {/* Catálogo y filtros */}
                 <section id="catalogo" className="space-y-6">
@@ -2343,6 +2389,9 @@ COMMIT;
                   <div className="sticky top-[7.4rem] md:static z-30 -mx-3 px-3 sm:mx-0 sm:px-0 py-2 md:py-0 bg-gray-50 dark:bg-[#0A0D14] md:bg-transparent flex flex-nowrap md:flex-wrap overflow-x-auto sin-barra gap-2">
                     <button onClick={() => setSelectedCategory('all')} className={`shrink-0 whitespace-nowrap px-4 py-2.5 sm:py-2 rounded-xl text-xs font-bold uppercase border ${selectedCategory === 'all' ? 'bg-[#8CFF00] text-black border-[#8CFF00]' : 'border-gray-300 dark:border-gray-800'}`}>
                       Todos
+                    </button>
+                    <button type="button" aria-pressed={onlyOnSale} onClick={() => setOnlyOnSale(!onlyOnSale)} className={`shrink-0 whitespace-nowrap px-4 py-2.5 sm:py-2 rounded-xl text-xs font-bold uppercase border inline-flex items-center gap-1.5 ${onlyOnSale ? 'bg-[#0033FF] text-white border-[#0033FF]' : 'border-gray-300 dark:border-gray-800'}`}>
+                      <TagIcon className="h-4 w-4" /> Ofertas
                     </button>
                     {categories.map(c => (
                       <button key={c.id} onClick={() => setSelectedCategory(c.id)} className={`shrink-0 whitespace-nowrap px-4 py-2.5 sm:py-2 rounded-xl text-xs font-bold uppercase border ${selectedCategory === c.id ? 'bg-[#8CFF00] text-black border-[#8CFF00]' : 'border-gray-300 dark:border-gray-800'}`}>
