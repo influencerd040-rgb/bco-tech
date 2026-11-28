@@ -1675,6 +1675,17 @@ COMMIT;
           });
         }, [shopProducts, selectedCategory, searchQuery, onlyOnSale, coverModel, coverColor]);
 
+        // Al elegir una sección se quitan los filtros que podían dejarla vacía (Ofertas, búsqueda, modelo y color)
+        const verSeccion = (id, soloOfertas = false) => {
+          setSelectedCategory(id);
+          setOnlyOnSale(soloOfertas);
+          setSearchQuery('');
+          setCoverModel('');
+          setCoverColor('');
+          const catalogo = document.getElementById('catalogo');
+          if (catalogo && catalogo.getBoundingClientRect().top < 0) catalogo.scrollIntoView();
+        };
+
         const covers = products.filter(p => p.active && p.category === 'covers');
         const coverModels = [...new Set(covers.map(phoneModelOf).filter(Boolean))].sort((a, b) => modelRank(a) - modelRank(b));
         const coverColors = [...new Set(covers.filter(p => !coverModel || phoneModelOf(p) === coverModel).map(p => p.color).filter(Boolean))].sort();
@@ -2387,14 +2398,14 @@ COMMIT;
                 <section id="catalogo" className="space-y-6">
               
                   <div className="sticky top-[7.4rem] md:static z-30 -mx-3 px-3 sm:mx-0 sm:px-0 py-2 md:py-0 bg-gray-50 dark:bg-[#0A0D14] md:bg-transparent flex flex-nowrap md:flex-wrap overflow-x-auto sin-barra gap-2">
-                    <button onClick={() => setSelectedCategory('all')} className={`shrink-0 whitespace-nowrap px-4 py-2.5 sm:py-2 rounded-xl text-xs font-bold uppercase border ${selectedCategory === 'all' ? 'bg-[#8CFF00] text-black border-[#8CFF00]' : 'border-gray-300 dark:border-gray-800'}`}>
+                    <button onClick={() => verSeccion('all')} className={`shrink-0 whitespace-nowrap px-4 py-2.5 sm:py-2 rounded-xl text-xs font-bold uppercase border ${selectedCategory === 'all' ? 'bg-[#8CFF00] text-black border-[#8CFF00]' : 'border-gray-300 dark:border-gray-800'}`}>
                       Todos
                     </button>
-                    <button type="button" aria-pressed={onlyOnSale} onClick={() => setOnlyOnSale(!onlyOnSale)} className={`shrink-0 whitespace-nowrap px-4 py-2.5 sm:py-2 rounded-xl text-xs font-bold uppercase border inline-flex items-center gap-1.5 ${onlyOnSale ? 'bg-[#0033FF] text-white border-[#0033FF]' : 'border-gray-300 dark:border-gray-800'}`}>
+                    <button type="button" aria-pressed={onlyOnSale} onClick={() => verSeccion('all', !onlyOnSale)} className={`shrink-0 whitespace-nowrap px-4 py-2.5 sm:py-2 rounded-xl text-xs font-bold uppercase border inline-flex items-center gap-1.5 ${onlyOnSale ? 'bg-[#0033FF] text-white border-[#0033FF]' : 'border-gray-300 dark:border-gray-800'}`}>
                       <TagIcon className="h-4 w-4" /> Ofertas
                     </button>
                     {categories.map(c => (
-                      <button key={c.id} onClick={() => setSelectedCategory(c.id)} className={`shrink-0 whitespace-nowrap px-4 py-2.5 sm:py-2 rounded-xl text-xs font-bold uppercase border ${selectedCategory === c.id ? 'bg-[#8CFF00] text-black border-[#8CFF00]' : 'border-gray-300 dark:border-gray-800'}`}>
+                      <button key={c.id} onClick={() => verSeccion(c.id)} className={`shrink-0 whitespace-nowrap px-4 py-2.5 sm:py-2 rounded-xl text-xs font-bold uppercase border ${selectedCategory === c.id ? 'bg-[#8CFF00] text-black border-[#8CFF00]' : 'border-gray-300 dark:border-gray-800'}`}>
                         {c.name}
                       </button>
                     ))}
@@ -2432,7 +2443,12 @@ COMMIT;
                     </div>
                   )}
 
-                  {products.length > 0 && filteredProducts.length === 0 && selectedCategory === 'covers' && <p className="text-center text-sm text-gray-400 py-6">No hay covers con esa combinación.</p>}
+                  {products.length > 0 && filteredProducts.length === 0 && (
+                    <div data-testid="seccion-vacia" className="text-center text-sm text-gray-400 py-6 space-y-3">
+                      <p>{searchQuery ? 'No encontramos productos con esa búsqueda.' : selectedCategory === 'covers' && (coverModel || coverColor) ? 'No hay covers con esa combinación.' : onlyOnSale ? 'No hay ofertas en este momento.' : 'Todavía no hay productos en esta sección.'}</p>
+                      <button type="button" onClick={() => verSeccion('all')} className="bg-[#8CFF00] text-black font-bold px-4 py-2 rounded-xl">Ver todos los productos</button>
+                    </div>
+                  )}
 
                   {products.length === 0 && (
                 <div className="text-center text-sm text-gray-400 py-8 space-y-3">
