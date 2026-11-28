@@ -69,10 +69,8 @@
         .foto-producto { transition: transform 200ms var(--salida); }
         .foto-producto:hover { transform: scale(1.05); }
       }
-      /* Scroll especial: portada que se aleja y productos que aparecen al bajar */
+      /* Scroll especial: portada que se aleja; los productos crecen al deslizar (ver ScrollEffects) */
       .portada { scale: calc(1 - var(--portada, 0) * 0.1); opacity: calc(1 - var(--portada, 0) * 0.65); transform-origin: center bottom; }
-      .tarjeta[data-scroll="oculto"] { animation: none; opacity: 0; translate: 0 48px; scale: 0.94; }
-      .tarjeta[data-scroll="visto"] { animation: none; transition: opacity 500ms ease, translate 650ms var(--salida), scale 650ms var(--salida), border-color 160ms ease; }
       @media (prefers-reduced-motion: reduce) {
         .portada { scale: 1; opacity: 1; }
         html { scroll-behavior: auto; }
@@ -822,7 +820,7 @@ COMMIT;
         );
       };
 
-      // Efectos al deslizar la tienda: barra de avance, portada, aparición de productos y botón para subir
+      // Efectos al deslizar la tienda: barra de avance, portada, productos que crecen (estilo Apple Watch) y botón para subir
       const ScrollEffects = () => {
         const barra = React.useRef(null);
         const [lejos, setLejos] = useState(false);
@@ -831,6 +829,23 @@ COMMIT;
           const quieto = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
           const raiz = document.documentElement;
           let cuadro = 0;
+          // Cada producto crece al entrar en la pantalla y se encoge al salir
+          const crecer = () => {
+            const arriba = (document.querySelector('header')?.offsetHeight || 0) + 50;
+            const abajo = window.innerHeight - (window.innerWidth < 640 ? 64 : 0);
+            const medidas = [...document.querySelectorAll('.tarjeta')].map(t => {
+              const r = t.getBoundingClientRect();
+              const alto = t.offsetHeight;
+              const centro = r.top + r.height / 2; // el centro no cambia al escalar
+              const tramo = Math.min(alto, abajo - arriba) * 0.85 || 1;
+              const m = Math.min(1, Math.max(0, Math.min(abajo - (centro - alto / 2), centro + alto / 2 - arriba) / tramo));
+              return [t, m * (2 - m)];
+            });
+            medidas.forEach(([t, m]) => {
+              t.style.scale = (0.55 + 0.45 * m).toFixed(3);
+              t.style.opacity = (0.3 + 0.7 * m).toFixed(3);
+            });
+          };
           const medir = () => {
             cuadro = 0;
             const y = window.scrollY;
@@ -839,39 +854,23 @@ COMMIT;
             setLejos(y > 700);
             const portada = document.querySelector('.portada');
             if (portada && !quieto) portada.style.setProperty('--portada', Math.min(1, Math.max(0, y / (portada.offsetHeight || 1))).toFixed(3));
+            if (!quieto) crecer();
           };
           const alDeslizar = () => { if (!cuadro) cuadro = requestAnimationFrame(medir); };
           window.addEventListener('scroll', alDeslizar, { passive: true });
           window.addEventListener('resize', alDeslizar);
           medir();
 
-          let vigia = null, cambios = null;
-          if (!quieto && 'IntersectionObserver' in window) {
-            vigia = new IntersectionObserver(entradas => {
-              entradas.filter(e => e.isIntersecting).forEach((e, i) => {
-                e.target.style.transitionDelay = `${Math.min(i, 3) * 90}ms`;
-                e.target.dataset.scroll = 'visto';
-                vigia.unobserve(e.target);
-              });
-            }, { rootMargin: '0px 0px -6% 0px' });
-            // Solo se ocultan las tarjetas que todavía están por debajo de la pantalla
-            const preparar = () => document.querySelectorAll('.tarjeta:not([data-scroll])').forEach(t => {
-              if (t.getBoundingClientRect().top < window.innerHeight * 0.94) return;
-              t.dataset.scroll = 'oculto';
-              vigia.observe(t);
-            });
-            preparar();
-            cambios = new MutationObserver(() => { preparar(); alDeslizar(); });
-            cambios.observe(document.getElementById('root'), { childList: true, subtree: true });
-          }
+          // Vuelve a medir cuando cambian los productos (categoría, búsqueda, carga)
+          const cambios = new MutationObserver(alDeslizar);
+          cambios.observe(document.getElementById('root'), { childList: true, subtree: true });
 
           return () => {
             window.removeEventListener('scroll', alDeslizar);
             window.removeEventListener('resize', alDeslizar);
             cancelAnimationFrame(cuadro);
-            vigia?.disconnect();
-            cambios?.disconnect();
-            document.querySelectorAll('.tarjeta[data-scroll]').forEach(t => delete t.dataset.scroll);
+            cambios.disconnect();
+            document.querySelectorAll('.tarjeta').forEach(t => { t.style.scale = ''; t.style.opacity = ''; });
           };
         }, []);
 
